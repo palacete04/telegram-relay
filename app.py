@@ -5,6 +5,7 @@ from datetime import datetime
 from analyst_agent import run_analysis
 from developer_agent import apply_adjustment, get_current_params
 from optimizer_agent import run_optimization
+from verifier_agent import verify_and_apply, verify_all_params
 
 app = Flask(__name__)
 
@@ -143,12 +144,20 @@ def stats():
 
 @app.route("/adjust", methods=["POST"])
 def adjust():
-    """Aplica un ajuste al EA via el Agente Desarrollador"""
+    """Aplica un ajuste al EA - pasa por el Verificador primero"""
     data = request.get_json()
     if not data or "type" not in data or "value" not in data:
         return jsonify({"error": "Falta type o value"}), 400
-    result = apply_adjustment(data["type"], data["value"])
-    return jsonify({"status": "ok" if result else "error"})
+    current = get_current_params()
+    success, reason = verify_and_apply(data["type"], data["value"], current)
+    return jsonify({"status": "ok" if success else "rejected", "reason": reason})
+
+@app.route("/verify", methods=["GET"])
+def verify():
+    """Verifica que todos los parámetros actuales sean seguros"""
+    current = get_current_params()
+    ok, issues = verify_all_params(current)
+    return jsonify({"status": "ok" if ok else "issues", "issues": issues, "params": current})
 
 @app.route("/params", methods=["GET"])
 def params():
