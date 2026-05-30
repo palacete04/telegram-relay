@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from analyst_agent import run_analysis
 from developer_agent import apply_adjustment, get_current_params
+from optimizer_agent import run_optimization
 
 app = Flask(__name__)
 
@@ -154,6 +155,14 @@ def params():
     """Ver parametros actuales del EA"""
     p = get_current_params()
     return jsonify(p)
+
+@app.route("/optimize", methods=["GET"])
+def optimize():
+    """Ejecuta el Agente Optimizador"""
+    if len(trades) < 5:
+        return jsonify({"message": "Necesitas al menos 5 operaciones"})
+    result = run_optimization(trades)
+    return jsonify(result)
 
 @app.route("/analyze_market", methods=["GET"])
 def analyze_market():
