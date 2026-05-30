@@ -3,6 +3,7 @@ import requests
 import os
 from datetime import datetime
 from analyst_agent import run_analysis
+from developer_agent import apply_adjustment, get_current_params
 
 app = Flask(__name__)
 
@@ -138,6 +139,21 @@ def stats():
         "win_rate": round(sum(1 for t in trades if t['profit'] > 0) / len(trades) * 100, 1),
         "por_estrategia": by_strategy
     }
+
+@app.route("/adjust", methods=["POST"])
+def adjust():
+    """Aplica un ajuste al EA via el Agente Desarrollador"""
+    data = request.get_json()
+    if not data or "type" not in data or "value" not in data:
+        return jsonify({"error": "Falta type o value"}), 400
+    result = apply_adjustment(data["type"], data["value"])
+    return jsonify({"status": "ok" if result else "error"})
+
+@app.route("/params", methods=["GET"])
+def params():
+    """Ver parametros actuales del EA"""
+    p = get_current_params()
+    return jsonify(p)
 
 @app.route("/analyze_market", methods=["GET"])
 def analyze_market():
