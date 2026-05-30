@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import requests
 import os
 from datetime import datetime
+from analyst_agent import run_analysis
 
 app = Flask(__name__)
 
@@ -138,17 +139,11 @@ def stats():
         "por_estrategia": by_strategy
     }
 
+@app.route("/analyze_market", methods=["GET"])
+def analyze_market():
+    result = run_analysis(trades)
+    return jsonify(result)
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-# ============================================================
-# AGENTE ANALISTA
-# ============================================================
-from analyst_agent import run_analysis
-
-@app.route("/analyze_market", methods=["GET"])
-def analyze_market():
-    """Ejecuta el Agente Analista manualmente"""
-    result = run_analysis(trades)
-    return jsonify(result)
