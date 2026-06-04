@@ -191,7 +191,7 @@ def simulate_trade(entry, direction, tp_pips, sl_pips, future_candles):
         return round((last - entry) * 10000 * (1 if direction == "buy" else -1), 1)
     return 0
 
-def score_results(results, min_days=8, min_win_rate=50):
+def score_results(results, min_days=8, min_win_rate=45):
     traded     = [r for r in results if r.get("traded")]
     if not traded:
         return {"days_traded": 0, "days_won": 0, "win_rate": 0.0,
@@ -199,7 +199,8 @@ def score_results(results, min_days=8, min_win_rate=50):
     days_won   = sum(1 for r in traded if r["profit_pips"] > 0)
     total_pips = round(sum(r["profit_pips"] for r in traded), 1)
     win_rate   = round(days_won / len(traded) * 100, 1)
-    meets      = len(traded) >= min_days and win_rate >= min_win_rate
+    # Criterio: >= 45% win rate, >= 8 dias operados, Y pips positivos
+    meets      = len(traded) >= min_days and win_rate >= min_win_rate and total_pips > 0
     return {
         "days_traded": len(traded),
         "days_won":    days_won,
