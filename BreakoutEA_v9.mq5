@@ -41,7 +41,7 @@ input double   TokyoRatioSL        = 0.5;
 //--- Estrategia 4: RSI
 input bool     UsarRSI             = true;
 input int      RSIPeriod           = 14;
-input double   RSISobrevendido     = 25.0;
+input double   RSISobrevendido     = 30.0;
 input double   RSISobrecomprado    = 75.0;
 input double   RSITPPips           = 30.0;
 input double   RSISLPips           = 15.0;
