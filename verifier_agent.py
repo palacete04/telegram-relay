@@ -94,27 +94,23 @@ def verify_and_apply(adjustment_type, new_value, current_params=None):
         send_telegram(msg)
         return False, reason
 
-    # Ajuste aprobado - aplicar via Agente Desarrollador
-    base_url = os.environ.get("BASE_URL", "https://telegram-relay-6x6l.onrender.com")
+    # Ajuste aprobado - llamada directa al Desarrollador (mismo proceso)
     try:
-        response = requests.post(
-            f"{base_url}/adjust",
-            json={"type": adjustment_type, "value": new_value},
-            timeout=15
-        )
-        if response.status_code == 200 and response.json().get("status") == "ok":
-            msg = f"[VERIFICADOR] ✅ Ajuste APROBADO y aplicado\n"
-            msg += f"Parámetro: {adjustment_type}\n"
+        from developer_agent import apply_adjustment
+        success = apply_adjustment(adjustment_type, new_value)
+        if success:
+            msg = f"[VERIFICADOR] Ajuste APROBADO y aplicado\n"
+            msg += f"Parametro: {adjustment_type}\n"
             msg += f"Valor anterior: {current_value}\n"
             msg += f"Valor nuevo: {new_value}\n"
-            msg += f"⚠️ Recordá compilar y migrar el EA en MT5"
+            msg += f"Recorda compilar y migrar el EA en MT5"
             send_telegram(msg)
             return True, "Aplicado correctamente"
         else:
             send_telegram(f"[VERIFICADOR] Error al aplicar ajuste aprobado")
             return False, "Error al aplicar"
     except Exception as e:
-        send_telegram(f"[VERIFICADOR] Error de conexión: {str(e)}")
+        send_telegram(f"[VERIFICADOR] Error interno: {str(e)}")
         return False, str(e)
 
 def verify_all_params(params):
