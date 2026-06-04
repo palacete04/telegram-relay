@@ -668,9 +668,22 @@ def run_backtest(apply_changes=True):
             summary += "Aplicados:\n" + "\n".join(f"  {a}" for a in applied) + "\n"
         if rejected:
             summary += "Rechazados:\n" + "\n".join(f"  {r}" for r in rejected) + "\n"
-        if applied:
-            summary += "\nRecorda compilar y migrar el EA en MT5"
         send_telegram(summary)
+
+        # Mensaje claro con instrucciones de compilacion
+        if applied:
+            from verifier_agent import send_compilar_message
+            cambios = []
+            for a in applied:
+                parts = a.split(" -> ")
+                if len(parts) == 2:
+                    param = parts[0].strip()
+                    cambios.append({
+                        "param":    param,
+                        "anterior": "anterior",
+                        "nuevo":    parts[1].strip()
+                    })
+            send_compilar_message(cambios)
 
     return {
         "status":      "ok",
