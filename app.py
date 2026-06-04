@@ -6,6 +6,7 @@ from analyst_agent import run_analysis
 from developer_agent import apply_adjustment, get_current_params
 from optimizer_agent import run_optimization
 from verifier_agent import verify_and_apply, verify_all_params
+from backtester_agent import run_backtest
 from scheduler import start_scheduler
 
 app = Flask(__name__)
@@ -84,12 +85,25 @@ def analyze_trades(trades_data):
 
     return alerts
 
+# ─────────────────────────────────────────────
+# Rutas existentes
+# ─────────────────────────────────────────────
+
 @app.route("/", methods=["GET"])
 def home():
     total = len(trades)
     wins = sum(1 for t in trades if t['profit'] > 0)
     total_profit = sum(t['profit'] for t in trades)
-    return {"status": "BreakoutEA Monitor activo", "total": total, "wins": wins, "losses": total-wins, "pnl": round(total_profit, 2)}
+    return {
+        "status": "BreakoutEA Monitor activo",
+        "total": total,
+        "wins": wins,
+        "losses": total - wins,
+        "pnl": round(total_profit, 2),
+        "endpoints": ["/notify", "/trade", "/stats", "/adjust", "/heartbeat",
+                      "/heartbeat_status", "/verify", "/params", "/optimize",
+                      "/analyze_market", "/backtest"]
+    }
 
 @app.route("/notify", methods=["POST"])
 def notify():
@@ -106,16 +120,15 @@ def register_trade():
         return {"error": "Sin datos"}, 400
 
     trade = {
-        "time": data.get("time", datetime.now().strftime("%Y-%m-%d %H:%M")),
-        "strategy": data.get("strategy", "Desconocida"),
-        "type": data.get("type", ""),
-        "entry": float(data.get("entry", 0)),
-        "exit_price": float(data.get("exit", 0)),
-        "profit": float(data.get("profit", 0)),
+        "time":        data.get("time", datetime.now().strftime("%Y-%m-%d %H:%M")),
+        "strategy":    data.get("strategy", "Desconocida"),
+        "type":        data.get("type", ""),
+        "entry":       float(data.get("entry", 0)),
+        "exit_price":  float(data.get("exit", 0)),
+        "profit":      float(data.get("profit", 0)),
     }
     trades.append(trade)
 
-    # Analizar y enviar alertas
     alerts = analyze_trades(trades)
     if alerts:
         for alert in alerts:
@@ -140,9 +153,9 @@ def stats():
         by_strategy[s]['profit'] = round(by_strategy[s]['profit'] + t['profit'], 2)
 
     return {
-        "total": len(trades),
-        "pnl_total": round(sum(t['profit'] for t in trades), 2),
-        "win_rate": round(sum(1 for t in trades if t['profit'] > 0) / len(trades) * 100, 1),
+        "total":        len(trades),
+        "pnl_total":    round(sum(t['profit'] for t in trades), 2),
+        "win_rate":     round(sum(1 for t in trades if t['profit'] > 0) / len(trades) * 100, 1),
         "por_estrategia": by_strategy
     }
 
@@ -169,7 +182,6 @@ def heartbeat():
 @app.route("/heartbeat_status", methods=["GET"])
 def heartbeat_status():
     """Verifica si el EA sigue activo"""
-    import time
     if last_heartbeat is None:
         return jsonify({"status": "sin_datos", "message": "Nunca se recibio heartbeat"})
     seconds_ago = (datetime.now() - last_heartbeat).total_seconds()
@@ -204,6 +216,28 @@ def optimize():
 def analyze_market():
     result = run_analysis(trades)
     return jsonify(result)
+
+# ─────────────────────────────────────────────
+# Nuevo endpoint: Backtest semanal
+# ─────────────────────────────────────────────
+
+@app.route("/backtest", methods=["GET"])
+def backtest():
+    """
+    Ejecuta el backtest completo sobre las últimas 8 semanas.
+    Parámetros opcionales:
+      ?apply=false  → solo reporta, no aplica cambios
+    """
+    apply_changes = request.args.get("apply", "true").lower() != "false"
+    result = run_backtest(apply_changes=apply_changes)
+    # Excluir all_results del JSON (demasiado grande)
+    return jsonify({
+        "status":       result.get("status"),
+        "best_params":  result.get("best_params"),
+        "candles_used": result.get("candles"),
+        "timestamp":    result.get("timestamp"),
+        "apply_changes": apply_changes,
+    })
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
