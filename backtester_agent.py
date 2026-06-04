@@ -645,45 +645,70 @@ def run_backtest(apply_changes=True):
 
     # ── Aplicar cambios — llamada directa a funciones (mismo proceso) ─
     if apply_changes and best_params:
-        # Importar aquí para evitar imports circulares
-        from verifier_agent import verify_and_apply
+        from verifier_agent import verify_and_apply, send_compilar_message
         from developer_agent import get_current_params
 
         current = get_current_params()
+
+        # Mapeo de nombre interno a nombre del EA para comparar
+        param_map = {
+            "rsi_sobrevendido":     "RSISobrevendido",
+            "rsi_sobrecomprado":    "RSISobrecomprado",
+            "rango_min_nasdaq":     "RangoMinPips",
+            "rango_min_europa":     "RangoMinEuropa",
+            "rango_min_tokyo":      "RangoMinTokyo",
+            "bollinger_desviacion": "BollingerDesviacion",
+        }
+
+        # Filtrar solo los que realmente cambian
+        params_a_aplicar = {}
+        ya_actualizados  = []
+        for param_type, value in best_params.items():
+            ea_param = param_map.get(param_type)
+            if ea_param and ea_param in current:
+                if float(current[ea_param]) == float(value):
+                    ya_actualizados.append(f"{param_type} = {value} (sin cambio)")
+                    continue
+            params_a_aplicar[param_type] = value
+
+        if ya_actualizados:
+            send_telegram(
+                "Parametros ya optimizados (sin cambios):\n" +
+                "\n".join(f"  {p}" for p in ya_actualizados)
+            )
+
         applied  = []
         rejected = []
+        cambios_aplicados = []
 
-        for param_type, value in best_params.items():
+        for param_type, value in params_a_aplicar.items():
+            ea_param = param_map.get(param_type)
+            anterior = current.get(ea_param, "?") if ea_param else "?"
             try:
                 success, reason = verify_and_apply(param_type, value, current)
                 if success:
                     applied.append(f"{param_type} -> {value}")
+                    cambios_aplicados.append({
+                        "param":    param_type,
+                        "anterior": anterior,
+                        "nuevo":    value
+                    })
                 else:
                     rejected.append(f"{param_type} ({reason})")
             except Exception as e:
                 rejected.append(f"{param_type} (error: {e})")
 
-        summary = "RESULTADO DE APLICACION:\n"
-        if applied:
-            summary += "Aplicados:\n" + "\n".join(f"  {a}" for a in applied) + "\n"
-        if rejected:
-            summary += "Rechazados:\n" + "\n".join(f"  {r}" for r in rejected) + "\n"
-        send_telegram(summary)
+        if applied or rejected:
+            summary = "RESULTADO DE APLICACION:\n"
+            if applied:
+                summary += "Aplicados:\n" + "\n".join(f"  {a}" for a in applied) + "\n"
+            if rejected:
+                summary += "Rechazados:\n" + "\n".join(f"  {r}" for r in rejected) + "\n"
+            send_telegram(summary)
 
-        # Mensaje claro con instrucciones de compilacion
-        if applied:
-            from verifier_agent import send_compilar_message
-            cambios = []
-            for a in applied:
-                parts = a.split(" -> ")
-                if len(parts) == 2:
-                    param = parts[0].strip()
-                    cambios.append({
-                        "param":    param,
-                        "anterior": "anterior",
-                        "nuevo":    parts[1].strip()
-                    })
-            send_compilar_message(cambios)
+        # Mensaje de accion requerida solo si hubo cambios reales
+        if cambios_aplicados:
+            send_compilar_message(cambios_aplicados)
 
     return {
         "status":      "ok",
