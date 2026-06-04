@@ -6,13 +6,17 @@ from analyst_agent import run_analysis
 from developer_agent import apply_adjustment, get_current_params
 from optimizer_agent import run_optimization
 from verifier_agent import verify_and_apply, verify_all_params
+from scheduler import start_scheduler
 
 app = Flask(__name__)
+start_scheduler()
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8957492846:AAGophSxXOSZGT4Gd1cLTNOICzxpZIH5wEU")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6518133529")
 
 trades = []
+last_heartbeat = None
+HEARTBEAT_TIMEOUT = 45 * 60  # 45 minutos en segundos
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -151,6 +155,29 @@ def adjust():
     current = get_current_params()
     success, reason = verify_and_apply(data["type"], data["value"], current)
     return jsonify({"status": "ok" if success else "rejected", "reason": reason})
+
+@app.route("/heartbeat", methods=["POST"])
+def heartbeat():
+    """Recibe heartbeat del EA cada 30 minutos"""
+    global last_heartbeat
+    last_heartbeat = datetime.now()
+    data = request.get_json() or {}
+    hour_et = data.get("hour_et", "?")
+    print(f"Heartbeat recibido - hora ET: {hour_et}")
+    return jsonify({"status": "ok", "time": str(last_heartbeat)})
+
+@app.route("/heartbeat_status", methods=["GET"])
+def heartbeat_status():
+    """Verifica si el EA sigue activo"""
+    import time
+    if last_heartbeat is None:
+        return jsonify({"status": "sin_datos", "message": "Nunca se recibio heartbeat"})
+    seconds_ago = (datetime.now() - last_heartbeat).total_seconds()
+    if seconds_ago > HEARTBEAT_TIMEOUT:
+        msg = f"[ALERTA] Bot posiblemente detenido - ultimo heartbeat hace {int(seconds_ago/60)} minutos"
+        send_telegram(msg)
+        return jsonify({"status": "alerta", "minutes_ago": int(seconds_ago/60)})
+    return jsonify({"status": "activo", "minutes_ago": int(seconds_ago/60)})
 
 @app.route("/verify", methods=["GET"])
 def verify():
