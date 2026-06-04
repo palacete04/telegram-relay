@@ -643,21 +643,23 @@ def run_backtest(apply_changes=True):
     )
     send_telegram_chunks(report_lines, header=header)
 
-    # ── Aplicar cambios ───────────────────────────────────────────────
+    # ── Aplicar cambios — llamada directa a funciones (mismo proceso) ─
     if apply_changes and best_params:
+        # Importar aquí para evitar imports circulares
+        from verifier_agent import verify_and_apply
+        from developer_agent import get_current_params
+
+        current = get_current_params()
         applied  = []
         rejected = []
+
         for param_type, value in best_params.items():
             try:
-                resp = requests.post(
-                    f"{BASE_URL}/adjust",
-                    json={"type": param_type, "value": value},
-                    timeout=15
-                )
-                if resp.status_code == 200 and resp.json().get("status") == "ok":
+                success, reason = verify_and_apply(param_type, value, current)
+                if success:
                     applied.append(f"{param_type} -> {value}")
                 else:
-                    rejected.append(f"{param_type} ({resp.json().get('reason','rechazado')})")
+                    rejected.append(f"{param_type} ({reason})")
             except Exception as e:
                 rejected.append(f"{param_type} (error: {e})")
 
