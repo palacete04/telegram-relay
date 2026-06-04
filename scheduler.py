@@ -56,16 +56,27 @@ def run_agent_pipeline():
     except Exception as e:
         print(f"Error en pipeline: {e}")
 
+def run_weekly_backtest():
+    """Llama al endpoint de backtest semanal"""
+    try:
+        response = requests.get(f"{BASE_URL}/backtest", timeout=120)
+        print(f"Backtest semanal ejecutado: {response.status_code}")
+    except Exception as e:
+        print(f"Error en backtest semanal: {e}")
+        send_telegram(f"[BACKTESTER] ❌ Error al ejecutar backtest: {e}")
+
 def scheduler_loop():
     """Loop principal del scheduler - corre en background"""
     print("Scheduler MT5 iniciado")
-    last_pipeline = None
-    
+    last_pipeline  = None
+    last_backtest  = None   # control para no repetir el backtest en el mismo domingo
+
     while True:
         now = datetime.utcnow()
         # Hora Argentina = UTC - 3
         hour_arg = (now.hour - 3) % 24
-        minute = now.minute
+        minute   = now.minute
+        weekday  = now.weekday()   # 0=lunes … 6=domingo
 
         # =============================================
         # VERIFICACIONES DE HEARTBEAT ANTES DE SESIONES
@@ -99,13 +110,25 @@ def scheduler_loop():
             time.sleep(70)
 
         # =============================================
-        # PIPELINE DE AGENTES - Una vez por dia a las 18:00 ARG
+        # PIPELINE DE AGENTES — Una vez por dia a las 18:00 ARG
+        # (lunes a viernes solamente)
         # =============================================
         today = now.date()
-        if hour_arg == 18 and minute == 0 and last_pipeline != today:
+        if weekday < 5 and hour_arg == 18 and minute == 0 and last_pipeline != today:
             last_pipeline = today
             print("Ejecutando pipeline diario de agentes...")
             run_agent_pipeline()
+            time.sleep(70)
+
+        # =============================================
+        # BACKTEST SEMANAL — Domingos a las 10:00 AM ARG
+        # Analiza las últimas 8 semanas y ajusta parámetros
+        # =============================================
+        if weekday == 6 and hour_arg == 10 and minute == 0 and last_backtest != today:
+            last_backtest = today
+            print("Ejecutando backtest semanal...")
+            send_telegram("[SCHEDULER] Iniciando backtest semanal dominical...")
+            run_weekly_backtest()
             time.sleep(70)
 
         time.sleep(30)  # Verificar cada 30 segundos
