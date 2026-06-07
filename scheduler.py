@@ -56,80 +56,73 @@ def run_agent_pipeline():
     except Exception as e:
         print(f"Error en pipeline: {e}")
 
-def run_weekly_backtest():
-    """Llama al endpoint de backtest semanal"""
-    try:
-        response = requests.get(f"{BASE_URL}/backtest", timeout=120)
-        print(f"Backtest semanal ejecutado: {response.status_code}")
-    except Exception as e:
-        print(f"Error en backtest semanal: {e}")
-        send_telegram(f"[BACKTESTER] ❌ Error al ejecutar backtest: {e}")
-
 def scheduler_loop():
     """Loop principal del scheduler - corre en background"""
     print("Scheduler MT5 iniciado")
-    last_pipeline  = None
-    last_backtest  = None   # control para no repetir el backtest en el mismo domingo
+    last_pipeline = None
+
+    # Flags para evitar doble disparo de heartbeats
+    last_heartbeat_tokyo = None
+    last_heartbeat_europa = None
+    last_heartbeat_nasdaq = None
 
     while True:
         now = datetime.utcnow()
         # Hora Argentina = UTC - 3
         hour_arg = (now.hour - 3) % 24
-        minute   = now.minute
-        weekday  = now.weekday()   # 0=lunes … 6=domingo
+        minute = now.minute
+        today = now.date()
 
         # =============================================
         # VERIFICACIONES DE HEARTBEAT ANTES DE SESIONES
+        # Usamos fecha+hora como clave para evitar doble disparo
         # =============================================
 
-        # Antes de Tokyo (9:50 PM Argentina = 22:50 ARG)
-        if hour_arg == 21 and minute == 50:
+        # Antes de Tokyo (21:50 ARG)
+        tokyo_key = (today, "tokyo")
+        if hour_arg == 21 and minute == 50 and last_heartbeat_tokyo != tokyo_key:
+            last_heartbeat_tokyo = tokyo_key
             status, minutes_ago = check_heartbeat()
             if status != "activo":
                 send_telegram(f"[ALERTA] Bot MT5 inactivo antes de Tokyo!\nUltimo heartbeat: {minutes_ago} min. Verificá MT5.")
             else:
                 send_telegram(f"[OK] Bot MT5 activo antes de Tokyo ({minutes_ago} min ago)")
             time.sleep(70)
+            continue
 
-        # Antes de Europa (5:50 AM Argentina)
-        elif hour_arg == 5 and minute == 50:
+        # Antes de Europa (5:50 ARG)
+        europa_key = (today, "europa")
+        if hour_arg == 5 and minute == 50 and last_heartbeat_europa != europa_key:
+            last_heartbeat_europa = europa_key
             status, minutes_ago = check_heartbeat()
             if status != "activo":
                 send_telegram(f"[ALERTA] Bot MT5 inactivo antes de Europa!\nUltimo heartbeat: {minutes_ago} min. Verificá MT5.")
             else:
                 send_telegram(f"[OK] Bot MT5 activo antes de Europa ({minutes_ago} min ago)")
             time.sleep(70)
+            continue
 
-        # Antes de Nasdaq (11:35 AM Argentina)
-        elif hour_arg == 11 and minute == 35:
+        # Antes de Nasdaq (11:35 ARG)
+        nasdaq_key = (today, "nasdaq")
+        if hour_arg == 11 and minute == 35 and last_heartbeat_nasdaq != nasdaq_key:
+            last_heartbeat_nasdaq = nasdaq_key
             status, minutes_ago = check_heartbeat()
             if status != "activo":
                 send_telegram(f"[ALERTA] Bot MT5 inactivo antes de Nasdaq!\nUltimo heartbeat: {minutes_ago} min. Verificá MT5.")
             else:
                 send_telegram(f"[OK] Bot MT5 activo antes de Nasdaq ({minutes_ago} min ago)")
             time.sleep(70)
+            continue
 
         # =============================================
-        # PIPELINE DE AGENTES — Una vez por dia a las 18:00 ARG
-        # (lunes a viernes solamente)
+        # PIPELINE DE AGENTES - Una vez por dia a las 18:00 ARG
         # =============================================
-        today = now.date()
-        if weekday < 5 and hour_arg == 18 and minute == 0 and last_pipeline != today:
+        if hour_arg == 18 and minute == 0 and last_pipeline != today:
             last_pipeline = today
             print("Ejecutando pipeline diario de agentes...")
             run_agent_pipeline()
             time.sleep(70)
-
-        # =============================================
-        # BACKTEST SEMANAL — Domingos a las 10:00 AM ARG
-        # Analiza las últimas 8 semanas y ajusta parámetros
-        # =============================================
-        if weekday == 6 and hour_arg == 10 and minute == 0 and last_backtest != today:
-            last_backtest = today
-            print("Ejecutando backtest semanal...")
-            send_telegram("[SCHEDULER] Iniciando backtest semanal dominical...")
-            run_weekly_backtest()
-            time.sleep(70)
+            continue
 
         time.sleep(30)  # Verificar cada 30 segundos
 
