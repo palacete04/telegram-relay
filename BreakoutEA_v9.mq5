@@ -1,9 +1,9 @@
 //+------------------------------------------------------------------+
 //|  BreakoutEA_v9.mq5                                               |
-//|  v9.4: + E6 Mean Reversion | RSI/Bollinger sin filtro tendencia  |
+//|  v9.5: RSI/Bollinger desactivados | MR optimizado 1.2/25/30      |
 //+------------------------------------------------------------------+
 #property copyright "BreakoutEA v9"
-#property version   "9.40"
+#property version   "9.50"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -38,8 +38,8 @@ input int      TokyoEntryHour      = 20;
 input double   TokyoRatioTP        = 1.0;
 input double   TokyoRatioSL        = 0.5;
 
-//--- Estrategia 4: RSI (sin filtro de tendencia — backtesting mostró mejor resultado)
-input bool     UsarRSI             = true;
+//--- Estrategia 4: RSI (DESACTIVADA — backtesting: win rate insuficiente)
+input bool     UsarRSI             = false;
 input int      RSIPeriod           = 14;
 input double   RSISobrevendido     = 30.0;
 input double   RSISobrecomprado    = 70.0;
@@ -47,20 +47,20 @@ input double   RSITPPips           = 30.0;
 input double   RSISLPips           = 15.0;
 input bool     RSIUsarFiltroTendencia = false;
 
-//--- Estrategia 5: Bollinger (sin filtro de tendencia — backtesting mostró mejor resultado)
-input bool     UsarBollinger       = true;
+//--- Estrategia 5: Bollinger (DESACTIVADA — backtesting: win rate insuficiente)
+input bool     UsarBollinger       = false;
 input int      BollingerPeriod     = 20;
 input double   BollingerDesviacion = 2.5;
 input double   BollTPPips          = 25.0;
 input double   BollSLPips          = 12.0;
 input bool     BollUsarFiltroTendencia = false;
 
-//--- Estrategia 6: Mean Reversion (NUEVA)
+//--- Estrategia 6: Mean Reversion (optimizada — backtesting 14/06/2026)
 input bool     UsarMeanReversion   = true;
 input int      MR_Lookback         = 8;      // horas para calcular la media
-input double   MR_ATR_Mult         = 2.0;    // multiplicador ATR — backtesting: 2.0 es el mejor
-input double   MR_TP_Pips          = 20.0;   // TP conservador
-input double   MR_SL_Pips          = 25.0;   // SL un poco más amplio
+input double   MR_ATR_Mult         = 1.2;    // multiplicador ATR — mejor resultado backtesting
+input double   MR_TP_Pips          = 25.0;   // TP optimizado
+input double   MR_SL_Pips          = 30.0;   // SL optimizado
 
 //--- Filtros generales (aplican a breakouts E1/E2/E3)
 input bool     UsarFiltroTendencia = true;
@@ -168,8 +168,6 @@ void SendTradeData(string strategy, string type, double entry, double exitPrice,
 }
 
 //+------------------------------------------------------------------+
-//| Verificar si hay operación abierta (cualquier estrategia)        |
-//+------------------------------------------------------------------+
 bool HayOperacionAbierta()
 {
    return tradeNasdaqOpen || tradeEuropaOpen || tradeTokyoOpen ||
@@ -179,22 +177,19 @@ bool HayOperacionAbierta()
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   Print("=== BreakoutEA v9.4 iniciado ===");
+   Print("=== BreakoutEA v9.5 iniciado ===");
    Print("E1 Nasdaq:         ", UsarEstrategia1   ? "ACTIVA" : "INACTIVA");
    Print("E2 Europa:         ", UsarEstrategia2   ? "ACTIVA" : "INACTIVA");
    Print("E3 Tokyo:          ", UsarEstrategia3   ? "ACTIVA" : "INACTIVA");
-   Print("E4 RSI:            ", UsarRSI           ? "ACTIVA" : "INACTIVA");
-   Print("  RSI niveles:     ", RSISobrevendido, " / ", RSISobrecomprado);
-   Print("  RSI filtro tend: ", RSIUsarFiltroTendencia ? "SI" : "NO");
-   Print("E5 Bollinger:      ", UsarBollinger     ? "ACTIVA" : "INACTIVA");
-   Print("  Boll filtro tend:", BollUsarFiltroTendencia ? "SI" : "NO");
+   Print("E4 RSI:            ", UsarRSI           ? "ACTIVA" : "INACTIVA (desactivada por backtesting)");
+   Print("E5 Bollinger:      ", UsarBollinger     ? "ACTIVA" : "INACTIVA (desactivada por backtesting)");
    Print("E6 Mean Reversion: ", UsarMeanReversion ? "ACTIVA" : "INACTIVA");
    Print("  MR ATR mult:     ", MR_ATR_Mult);
    Print("  MR TP/SL:        ", MR_TP_Pips, " / ", MR_SL_Pips, " pips");
    Print("Modo demo:         ", ModoDemo ? "SI" : "NO");
    trade.SetExpertMagicNumber(202509);
-   SendTelegram("BreakoutEA v9.4 iniciado en " + Symbol() +
-                " | E6 Mean Reversion ACTIVA");
+   SendTelegram("BreakoutEA v9.5 iniciado en " + Symbol() +
+                " | RSI/Bollinger OFF | MR ATR=1.2 TP=25 SL=30");
    return(INIT_SUCCEEDED);
 }
 
@@ -220,7 +215,7 @@ void OnTick()
       levelsSet=false;    tradedNasdaq=false; tradeNasdaqOpen=false; ticketNasdaq=0;
       europaRangeSet=false; tradedEuropa=false; tradeEuropaOpen=false; ticketEuropa=0;
       prevHigh=prevLow=europaHigh=europaLow=0;
-      tradeMROpen=false; ticketMR=0;   // reset E6
+      tradeMROpen=false; ticketMR=0;
       Print("--- Nuevo dia ---");
       SendTelegram("[DIA] Nuevo dia iniciado - " + Symbol());
    }
@@ -304,7 +299,7 @@ void OnTick()
       return;
    }
 
-   //--- MA200 y MA50 (para breakouts y filtros opcionales)
+   //--- MA200 y MA50
    double ma200=0, ma50=0;
    if(UsarFiltroTendencia)
    {
@@ -322,7 +317,7 @@ void OnTick()
    bool tendenciaBajista=(ma50>0 && ma200>0 && bid<ma50 && ma50<ma200);
 
    //=================================================================
-   //--- E4: RSI — sin filtro de tendencia por defecto (backtesting)
+   //--- E4: RSI — DESACTIVADA
    //=================================================================
    if(UsarRSI && !tradeRSIOpen && !HayOperacionAbierta())
    {
@@ -336,44 +331,29 @@ void OnTick()
             double rsi=rsiBuffer[0];
             double tpDist=RSITPPips*_Point*10;
             double slDist=RSISLPips*_Point*10;
-
-            // Con o sin filtro de tendencia según parámetro
             bool okBuy  = RSIUsarFiltroTendencia ? (rsi < RSISobrevendido && tendenciaAlcista)
                                                  : (rsi < RSISobrevendido);
             bool okSell = RSIUsarFiltroTendencia ? (rsi > RSISobrecomprado && tendenciaBajista)
                                                  : (rsi > RSISobrecomprado);
-
             if(okBuy)
             {
                double tp=ask+tpDist, sl=ask-slDist;
-               Print(">>> [E4-RSI] BUY | RSI:",DoubleToString(rsi,1)," Ask:",ask);
                if(!ModoDemo)
                {
                   if(trade.Buy(LotSize,Symbol(),ask,sl,tp,"RSI BUY v9"))
-                  {
-                     ticketRSI=trade.ResultOrder(); tradeRSIOpen=true;
-                     SendTelegram("[BUY] RSI BUY abierto\nRSI: "+DoubleToString(rsi,1)+
-                                  "\nEntrada: "+DoubleToString(ask,5)+
-                                  "\nTP: "+DoubleToString(tp,5)+
-                                  "\nSL: "+DoubleToString(sl,5));
-                  }
+                  { ticketRSI=trade.ResultOrder(); tradeRSIOpen=true;
+                    SendTelegram("[BUY] RSI BUY\nEntrada: "+DoubleToString(ask,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                }
                lastRSIBar=barTime;
             }
             else if(okSell)
             {
                double tp=bid-tpDist, sl=bid+slDist;
-               Print(">>> [E4-RSI] SELL | RSI:",DoubleToString(rsi,1)," Bid:",bid);
                if(!ModoDemo)
                {
                   if(trade.Sell(LotSize,Symbol(),bid,sl,tp,"RSI SELL v9"))
-                  {
-                     ticketRSI=trade.ResultOrder(); tradeRSIOpen=true;
-                     SendTelegram("[SELL] RSI SELL abierto\nRSI: "+DoubleToString(rsi,1)+
-                                  "\nEntrada: "+DoubleToString(bid,5)+
-                                  "\nTP: "+DoubleToString(tp,5)+
-                                  "\nSL: "+DoubleToString(sl,5));
-                  }
+                  { ticketRSI=trade.ResultOrder(); tradeRSIOpen=true;
+                    SendTelegram("[SELL] RSI SELL\nEntrada: "+DoubleToString(bid,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                }
                lastRSIBar=barTime;
             }
@@ -383,7 +363,7 @@ void OnTick()
    }
 
    //=================================================================
-   //--- E5: Bollinger — sin filtro de tendencia por defecto
+   //--- E5: Bollinger — DESACTIVADA
    //=================================================================
    if(UsarBollinger && !tradeBollOpen && !HayOperacionAbierta())
    {
@@ -398,41 +378,27 @@ void OnTick()
          {
             double tpDist=BollTPPips*_Point*10;
             double slDist=BollSLPips*_Point*10;
-
-            bool okSell = BollUsarFiltroTendencia ? (bid > upperBand[0] && tendenciaBajista)
-                                                  : (bid > upperBand[0]);
-            bool okBuy  = BollUsarFiltroTendencia ? (ask < lowerBand[0] && tendenciaAlcista)
-                                                  : (ask < lowerBand[0]);
-
+            bool okSell = BollUsarFiltroTendencia ? (bid > upperBand[0] && tendenciaBajista) : (bid > upperBand[0]);
+            bool okBuy  = BollUsarFiltroTendencia ? (ask < lowerBand[0] && tendenciaAlcista) : (ask < lowerBand[0]);
             if(okSell)
             {
                double tp=bid-tpDist, sl=bid+slDist;
-               Print(">>> [E5-Boll] SELL | Bid:",bid," > UB:",upperBand[0]);
                if(!ModoDemo)
                {
                   if(trade.Sell(LotSize,Symbol(),bid,sl,tp,"Boll SELL v9"))
-                  {
-                     ticketBoll=trade.ResultOrder(); tradeBollOpen=true;
-                     SendTelegram("[SELL] Bollinger SELL abierto\nEntrada: "+DoubleToString(bid,5)+
-                                  "\nTP: "+DoubleToString(tp,5)+
-                                  "\nSL: "+DoubleToString(sl,5));
-                  }
+                  { ticketBoll=trade.ResultOrder(); tradeBollOpen=true;
+                    SendTelegram("[SELL] Bollinger SELL\nEntrada: "+DoubleToString(bid,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                }
                lastBollBar=barTime;
             }
             else if(okBuy)
             {
                double tp=ask+tpDist, sl=ask-slDist;
-               Print(">>> [E5-Boll] BUY | Ask:",ask," < LB:",lowerBand[0]);
                if(!ModoDemo)
                {
                   if(trade.Buy(LotSize,Symbol(),ask,sl,tp,"Boll BUY v9"))
-                  {
-                     ticketBoll=trade.ResultOrder(); tradeBollOpen=true;
-                     SendTelegram("[BUY] Bollinger BUY abierto\nEntrada: "+DoubleToString(ask,5)+
-                                  "\nTP: "+DoubleToString(tp,5)+
-                                  "\nSL: "+DoubleToString(sl,5));
-                  }
+                  { ticketBoll=trade.ResultOrder(); tradeBollOpen=true;
+                    SendTelegram("[BUY] Bollinger BUY\nEntrada: "+DoubleToString(ask,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                }
                lastBollBar=barTime;
             }
@@ -442,16 +408,13 @@ void OnTick()
    }
 
    //=================================================================
-   //--- E6: Mean Reversion — nueva estrategia para mercados en rango
-   //    Lógica: si el precio se aleja ATR*mult de la media de las
-   //    últimas MR_Lookback horas, entra en contra esperando retorno
+   //--- E6: Mean Reversion — optimizada ATR=1.2 TP=25 SL=30
    //=================================================================
    if(UsarMeanReversion && !tradeMROpen && !HayOperacionAbierta())
    {
       datetime barTime=iTime(Symbol(),PERIOD_H1,0);
       if(barTime != lastMRBar)
       {
-         // Calcular media de las últimas MR_Lookback velas H1
          double closes[];
          ArraySetAsSeries(closes, true);
          if(CopyClose(Symbol(), PERIOD_H1, 1, MR_Lookback, closes) == MR_Lookback)
@@ -460,7 +423,6 @@ void OnTick()
             for(int k = 0; k < MR_Lookback; k++) meanPrice += closes[k];
             meanPrice /= MR_Lookback;
 
-            // ATR para medir la distancia
             int atrHandle = iATR(Symbol(), PERIOD_H1, 14);
             double atrBuf[1];
             if(atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle,0,1,1,atrBuf)==1)
@@ -471,42 +433,26 @@ void OnTick()
 
                if(ask < meanPrice - threshold)
                {
-                  // Precio muy por debajo de la media → BUY (espera rebote)
                   double tp=ask+tpDist, sl=ask-slDist;
-                  Print(">>> [E6-MR] BUY | Ask:",ask,
-                        " Media:",DoubleToString(meanPrice,5),
-                        " Umbral:",DoubleToString(threshold,5));
+                  Print(">>> [E6-MR] BUY | Ask:",ask," Media:",DoubleToString(meanPrice,5));
                   if(!ModoDemo)
                   {
                      if(trade.Buy(LotSize,Symbol(),ask,sl,tp,"MR BUY v9"))
-                     {
-                        ticketMR=trade.ResultOrder(); tradeMROpen=true;
-                        SendTelegram("[BUY] Mean Reversion BUY\nEntrada: "+DoubleToString(ask,5)+
-                                     "\nMedia: "+DoubleToString(meanPrice,5)+
-                                     "\nTP: "+DoubleToString(tp,5)+
-                                     "\nSL: "+DoubleToString(sl,5));
-                     }
+                     { ticketMR=trade.ResultOrder(); tradeMROpen=true;
+                       SendTelegram("[BUY] Mean Reversion BUY\nEntrada: "+DoubleToString(ask,5)+"\nMedia: "+DoubleToString(meanPrice,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                   }
                   else { Print("[DEMO] MR BUY @ ",ask); tradeMROpen=true; }
                   lastMRBar=barTime;
                }
                else if(bid > meanPrice + threshold)
                {
-                  // Precio muy por encima de la media → SELL (espera retorno)
                   double tp=bid-tpDist, sl=bid+slDist;
-                  Print(">>> [E6-MR] SELL | Bid:",bid,
-                        " Media:",DoubleToString(meanPrice,5),
-                        " Umbral:",DoubleToString(threshold,5));
+                  Print(">>> [E6-MR] SELL | Bid:",bid," Media:",DoubleToString(meanPrice,5));
                   if(!ModoDemo)
                   {
                      if(trade.Sell(LotSize,Symbol(),bid,sl,tp,"MR SELL v9"))
-                     {
-                        ticketMR=trade.ResultOrder(); tradeMROpen=true;
-                        SendTelegram("[SELL] Mean Reversion SELL\nEntrada: "+DoubleToString(bid,5)+
-                                     "\nMedia: "+DoubleToString(meanPrice,5)+
-                                     "\nTP: "+DoubleToString(tp,5)+
-                                     "\nSL: "+DoubleToString(sl,5));
-                     }
+                     { ticketMR=trade.ResultOrder(); tradeMROpen=true;
+                       SendTelegram("[SELL] Mean Reversion SELL\nEntrada: "+DoubleToString(bid,5)+"\nMedia: "+DoubleToString(meanPrice,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                   }
                   else { Print("[DEMO] MR SELL @ ",bid); tradeMROpen=true; }
                   lastMRBar=barTime;
@@ -518,7 +464,7 @@ void OnTick()
    }
 
    //=================================================================
-   //--- E3: Tokyo — máximo 1 operación abierta
+   //--- E3: Tokyo
    //=================================================================
    if(UsarEstrategia3 && tokyoRangeSet && !tradedTokyo && !tradeTokyoOpen &&
       hourET>=TokyoEntryHour && !HayOperacionAbierta())
@@ -530,7 +476,7 @@ void OnTick()
    }
 
    //=================================================================
-   //--- E2: Europa — máximo 1 operación abierta
+   //--- E2: Europa
    //=================================================================
    if(UsarEstrategia2 && europaRangeSet && !tradedEuropa && !tradeEuropaOpen &&
       hourET>=EuropaEntryHour && hourET<NasdaqEntryHour && !HayOperacionAbierta())
@@ -542,7 +488,7 @@ void OnTick()
    }
 
    //=================================================================
-   //--- E1: Nasdaq — máximo 1 operación abierta
+   //--- E1: Nasdaq
    //=================================================================
    if(UsarEstrategia1 && !tradedNasdaq && !tradeNasdaqOpen &&
       (hourET>NasdaqEntryHour||(hourET==NasdaqEntryHour&&dt.min>=NasdaqEntryMinute)) &&
@@ -568,11 +514,8 @@ void EjecutarBreakout(double ask,double bid,double nH,double nL,
       if(!ModoDemo)
       {
          if(trade.Buy(LotSize,Symbol(),ask,sl,tp,lBuy))
-         {
-            tkt=trade.ResultOrder(); tOpen=true; traded=true;
-            SendTelegram("[BUY] "+nom+" BUY abierto\nEntrada: "+DoubleToString(ask,5)+
-                         "\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5));
-         }
+         { tkt=trade.ResultOrder(); tOpen=true; traded=true;
+           SendTelegram("[BUY] "+nom+"\nEntrada: "+DoubleToString(ask,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
       }
       else { Print("[DEMO] ",nom," BUY @ ",ask); traded=true; }
    }
@@ -584,11 +527,8 @@ void EjecutarBreakout(double ask,double bid,double nH,double nL,
       if(!ModoDemo)
       {
          if(trade.Sell(LotSize,Symbol(),bid,sl,tp,lSell))
-         {
-            tkt=trade.ResultOrder(); tOpen=true; traded=true;
-            SendTelegram("[SELL] "+nom+" SELL abierto\nEntrada: "+DoubleToString(bid,5)+
-                         "\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5));
-         }
+         { tkt=trade.ResultOrder(); tOpen=true; traded=true;
+           SendTelegram("[SELL] "+nom+"\nEntrada: "+DoubleToString(bid,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
       }
       else { Print("[DEMO] ",nom," SELL @ ",bid); traded=true; }
    }
