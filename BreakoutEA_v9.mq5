@@ -1,9 +1,9 @@
 //+------------------------------------------------------------------+
 //|  BreakoutEA_v9.mq5                                               |
-//|  v9.5: RSI/Bollinger desactivados | MR optimizado 1.2/25/30      |
+//|  v9.6: Fix max 1 posicion — verificacion real de posiciones MT5  |
 //+------------------------------------------------------------------+
 #property copyright "BreakoutEA v9"
-#property version   "9.50"
+#property version   "9.60"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -168,10 +168,32 @@ void SendTradeData(string strategy, string type, double entry, double exitPrice,
 }
 
 //+------------------------------------------------------------------+
+//| Verifica posiciones REALES abiertas en MT5 — no variables locales|
+//| Esto evita abrir múltiples posiciones cuando el EA se reinicia   |
+//+------------------------------------------------------------------+
 bool HayOperacionAbierta()
 {
-   return tradeNasdaqOpen || tradeEuropaOpen || tradeTokyoOpen ||
-          tradeRSIOpen    || tradeBollOpen   || tradeMROpen;
+   // Primero verificar variables internas
+   if(tradeNasdaqOpen || tradeEuropaOpen || tradeTokyoOpen ||
+      tradeRSIOpen    || tradeBollOpen   || tradeMROpen)
+      return true;
+
+   // Luego verificar posiciones REALES en MT5
+   int total = PositionsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == Symbol() &&
+            PositionGetInteger(POSITION_MAGIC) == 202509)
+         {
+            Print("[SYNC] Posicion real detectada ticket:",ticket," — bloqueando nuevas entradas");
+            return true;
+         }
+      }
+   }
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -188,8 +210,8 @@ int OnInit()
    Print("  MR TP/SL:        ", MR_TP_Pips, " / ", MR_SL_Pips, " pips");
    Print("Modo demo:         ", ModoDemo ? "SI" : "NO");
    trade.SetExpertMagicNumber(202509);
-   SendTelegram("BreakoutEA v9.5 iniciado en " + Symbol() +
-                " | RSI/Bollinger OFF | MR ATR=1.2 TP=25 SL=30");
+   SendTelegram("BreakoutEA v9.6 iniciado en " + Symbol() +
+                " | RSI/Bollinger OFF | MR ATR=1.2 | Fix: max 1 posicion");
    return(INIT_SUCCEEDED);
 }
 
