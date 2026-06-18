@@ -1,9 +1,10 @@
 //+------------------------------------------------------------------+
 //|  BreakoutEA_v9.mq5                                               |
-//|  v9.6: Fix max 1 posicion — verificacion real de posiciones MT5  |
+//|  v9.7: Fix HayOperacionAbierta — throttle 60s, no consulta MT5  |
+//|        en cada tick para evitar colgarse en sincronizacion VPS   |
 //+------------------------------------------------------------------+
 #property copyright "BreakoutEA v9"
-#property version   "9.60"
+#property version   "9.70"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -113,6 +114,12 @@ datetime lastMRBar=0;
 //--- Global
 datetime lastDay=0;
 datetime lastHeartbeat=0;
+
+//--- Throttle para verificacion real de posiciones MT5
+//    Solo consulta PositionsTotal() cada 60 segundos, no en cada tick
+datetime lastPosCheck=0;
+bool     cachedHayPosicion=false;
+
 CTrade trade;
 
 //+------------------------------------------------------------------+
@@ -168,38 +175,56 @@ void SendTradeData(string strategy, string type, double entry, double exitPrice,
 }
 
 //+------------------------------------------------------------------+
-//| Verifica posiciones REALES abiertas en MT5 — no variables locales|
-//| Esto evita abrir múltiples posiciones cuando el EA se reinicia   |
+//| Verificar si hay operación abierta                               |
+//| Primero revisa variables internas (sin costo).                   |
+//| Solo consulta posiciones reales de MT5 cada 60 segundos para     |
+//| evitar saturar la comunicacion con el VPS y el mensaje colgado   |
+//| "Obteniendo el estado del servidor virtual".                      |
 //+------------------------------------------------------------------+
 bool HayOperacionAbierta()
 {
-   // Primero verificar variables internas
+   // 1. Variables internas — sin costo, sin llamada al servidor
    if(tradeNasdaqOpen || tradeEuropaOpen || tradeTokyoOpen ||
       tradeRSIOpen    || tradeBollOpen   || tradeMROpen)
       return true;
 
-   // Luego verificar posiciones REALES en MT5
+   // 2. Verificacion real contra MT5 — solo cada 60 segundos
+   datetime now = TimeCurrent();
+   if(now - lastPosCheck < 60)
+      return cachedHayPosicion;
+
+   lastPosCheck = now;
+   cachedHayPosicion = false;
+
    int total = PositionsTotal();
    for(int i = 0; i < total; i++)
    {
       ulong ticket = PositionGetTicket(i);
-      if(ticket > 0)
+      if(ticket > 0 &&
+         PositionGetString(POSITION_SYMBOL)  == Symbol() &&
+         PositionGetInteger(POSITION_MAGIC)  == 202509)
       {
-         if(PositionGetString(POSITION_SYMBOL) == Symbol() &&
-            PositionGetInteger(POSITION_MAGIC) == 202509)
-         {
-            Print("[SYNC] Posicion real detectada ticket:",ticket," — bloqueando nuevas entradas");
-            return true;
-         }
+         Print("[SYNC] Posicion real detectada ticket:",ticket," — bloqueando nuevas entradas");
+         cachedHayPosicion = true;
+         break;
       }
    }
-   return false;
+   return cachedHayPosicion;
+}
+
+//+------------------------------------------------------------------+
+//| Fuerza actualizacion del cache de posiciones (llamar al abrir    |
+//| o cerrar una operacion para que el cache quede al dia)           |
+//+------------------------------------------------------------------+
+void RefreshPosicionCache()
+{
+   lastPosCheck = 0; // fuerza reconsulta en el proximo tick
 }
 
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   Print("=== BreakoutEA v9.5 iniciado ===");
+   Print("=== BreakoutEA v9.7 iniciado ===");
    Print("E1 Nasdaq:         ", UsarEstrategia1   ? "ACTIVA" : "INACTIVA");
    Print("E2 Europa:         ", UsarEstrategia2   ? "ACTIVA" : "INACTIVA");
    Print("E3 Tokyo:          ", UsarEstrategia3   ? "ACTIVA" : "INACTIVA");
@@ -209,9 +234,10 @@ int OnInit()
    Print("  MR ATR mult:     ", MR_ATR_Mult);
    Print("  MR TP/SL:        ", MR_TP_Pips, " / ", MR_SL_Pips, " pips");
    Print("Modo demo:         ", ModoDemo ? "SI" : "NO");
+   Print("Fix v9.7:          HayOperacionAbierta con throttle 60s");
    trade.SetExpertMagicNumber(202509);
-   SendTelegram("BreakoutEA v9.6 iniciado en " + Symbol() +
-                " | RSI/Bollinger OFF | MR ATR=1.2 | Fix: max 1 posicion");
+   SendTelegram("BreakoutEA v9.7 iniciado en " + Symbol() +
+                " | Fix: verificacion posiciones cada 60s (no por tick)");
    return(INIT_SUCCEEDED);
 }
 
@@ -238,6 +264,7 @@ void OnTick()
       europaRangeSet=false; tradedEuropa=false; tradeEuropaOpen=false; ticketEuropa=0;
       prevHigh=prevLow=europaHigh=europaLow=0;
       tradeMROpen=false; ticketMR=0;
+      RefreshPosicionCache();
       Print("--- Nuevo dia ---");
       SendTelegram("[DIA] Nuevo dia iniciado - " + Symbol());
    }
@@ -363,7 +390,7 @@ void OnTick()
                if(!ModoDemo)
                {
                   if(trade.Buy(LotSize,Symbol(),ask,sl,tp,"RSI BUY v9"))
-                  { ticketRSI=trade.ResultOrder(); tradeRSIOpen=true;
+                  { ticketRSI=trade.ResultOrder(); tradeRSIOpen=true; RefreshPosicionCache();
                     SendTelegram("[BUY] RSI BUY\nEntrada: "+DoubleToString(ask,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                }
                lastRSIBar=barTime;
@@ -374,7 +401,7 @@ void OnTick()
                if(!ModoDemo)
                {
                   if(trade.Sell(LotSize,Symbol(),bid,sl,tp,"RSI SELL v9"))
-                  { ticketRSI=trade.ResultOrder(); tradeRSIOpen=true;
+                  { ticketRSI=trade.ResultOrder(); tradeRSIOpen=true; RefreshPosicionCache();
                     SendTelegram("[SELL] RSI SELL\nEntrada: "+DoubleToString(bid,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                }
                lastRSIBar=barTime;
@@ -408,7 +435,7 @@ void OnTick()
                if(!ModoDemo)
                {
                   if(trade.Sell(LotSize,Symbol(),bid,sl,tp,"Boll SELL v9"))
-                  { ticketBoll=trade.ResultOrder(); tradeBollOpen=true;
+                  { ticketBoll=trade.ResultOrder(); tradeBollOpen=true; RefreshPosicionCache();
                     SendTelegram("[SELL] Bollinger SELL\nEntrada: "+DoubleToString(bid,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                }
                lastBollBar=barTime;
@@ -419,7 +446,7 @@ void OnTick()
                if(!ModoDemo)
                {
                   if(trade.Buy(LotSize,Symbol(),ask,sl,tp,"Boll BUY v9"))
-                  { ticketBoll=trade.ResultOrder(); tradeBollOpen=true;
+                  { ticketBoll=trade.ResultOrder(); tradeBollOpen=true; RefreshPosicionCache();
                     SendTelegram("[BUY] Bollinger BUY\nEntrada: "+DoubleToString(ask,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                }
                lastBollBar=barTime;
@@ -460,7 +487,7 @@ void OnTick()
                   if(!ModoDemo)
                   {
                      if(trade.Buy(LotSize,Symbol(),ask,sl,tp,"MR BUY v9"))
-                     { ticketMR=trade.ResultOrder(); tradeMROpen=true;
+                     { ticketMR=trade.ResultOrder(); tradeMROpen=true; RefreshPosicionCache();
                        SendTelegram("[BUY] Mean Reversion BUY\nEntrada: "+DoubleToString(ask,5)+"\nMedia: "+DoubleToString(meanPrice,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                   }
                   else { Print("[DEMO] MR BUY @ ",ask); tradeMROpen=true; }
@@ -473,7 +500,7 @@ void OnTick()
                   if(!ModoDemo)
                   {
                      if(trade.Sell(LotSize,Symbol(),bid,sl,tp,"MR SELL v9"))
-                     { ticketMR=trade.ResultOrder(); tradeMROpen=true;
+                     { ticketMR=trade.ResultOrder(); tradeMROpen=true; RefreshPosicionCache();
                        SendTelegram("[SELL] Mean Reversion SELL\nEntrada: "+DoubleToString(bid,5)+"\nMedia: "+DoubleToString(meanPrice,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
                   }
                   else { Print("[DEMO] MR SELL @ ",bid); tradeMROpen=true; }
@@ -536,7 +563,7 @@ void EjecutarBreakout(double ask,double bid,double nH,double nL,
       if(!ModoDemo)
       {
          if(trade.Buy(LotSize,Symbol(),ask,sl,tp,lBuy))
-         { tkt=trade.ResultOrder(); tOpen=true; traded=true;
+         { tkt=trade.ResultOrder(); tOpen=true; traded=true; RefreshPosicionCache();
            SendTelegram("[BUY] "+nom+"\nEntrada: "+DoubleToString(ask,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
       }
       else { Print("[DEMO] ",nom," BUY @ ",ask); traded=true; }
@@ -549,7 +576,7 @@ void EjecutarBreakout(double ask,double bid,double nH,double nL,
       if(!ModoDemo)
       {
          if(trade.Sell(LotSize,Symbol(),bid,sl,tp,lSell))
-         { tkt=trade.ResultOrder(); tOpen=true; traded=true;
+         { tkt=trade.ResultOrder(); tOpen=true; traded=true; RefreshPosicionCache();
            SendTelegram("[SELL] "+nom+"\nEntrada: "+DoubleToString(bid,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
       }
       else { Print("[DEMO] ",nom," SELL @ ",bid); traded=true; }
@@ -576,7 +603,7 @@ void GestionarTrailing(ulong ticket,string nombre)
 void CerrarPosicion(ulong ticket,string motivo)
 {
    if(ticket==0) return;
-   if(PositionSelectByTicket(ticket)){ trade.PositionClose(ticket); Print("Cerrado: ",motivo); }
+   if(PositionSelectByTicket(ticket)){ trade.PositionClose(ticket); Print("Cerrado: ",motivo); RefreshPosicionCache(); }
 }
 
 //+------------------------------------------------------------------+
@@ -599,12 +626,12 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             Print("Operacion cerrada. P&L: ",dealProfit);
          }
       }
-      if(trans.order==ticketNasdaq) { tradeNasdaqOpen=false; }
-      if(trans.order==ticketEuropa) { tradeEuropaOpen=false; }
-      if(trans.order==ticketTokyo)  { tradeTokyoOpen=false;  }
-      if(trans.order==ticketRSI)    { tradeRSIOpen=false;    }
-      if(trans.order==ticketBoll)   { tradeBollOpen=false;   }
-      if(trans.order==ticketMR)     { tradeMROpen=false;     }
+      if(trans.order==ticketNasdaq) { tradeNasdaqOpen=false; RefreshPosicionCache(); }
+      if(trans.order==ticketEuropa) { tradeEuropaOpen=false; RefreshPosicionCache(); }
+      if(trans.order==ticketTokyo)  { tradeTokyoOpen=false;  RefreshPosicionCache(); }
+      if(trans.order==ticketRSI)    { tradeRSIOpen=false;    RefreshPosicionCache(); }
+      if(trans.order==ticketBoll)   { tradeBollOpen=false;   RefreshPosicionCache(); }
+      if(trans.order==ticketMR)     { tradeMROpen=false;     RefreshPosicionCache(); }
    }
 }
 
