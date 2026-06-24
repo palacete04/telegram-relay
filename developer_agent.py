@@ -131,6 +131,50 @@ def apply_adjustment(adjustment_type, value):
                 content
             )
 
+    elif adjustment_type == "mr_atr_mult":
+        import re
+        match = re.search(r'input double   MR_ATR_Mult\s+=\s+([\d.]+);', content)
+        if match:
+            old_value = match.group(1)
+            new_content = re.sub(
+                r'(input double   MR_ATR_Mult\s+=\s+)[\d.]+;',
+                f'\\g<1>{value};',
+                content
+            )
+
+    elif adjustment_type == "mr_tp_pips":
+        import re
+        match = re.search(r'input double   MR_TP_Pips\s+=\s+([\d.]+);', content)
+        if match:
+            old_value = match.group(1)
+            new_content = re.sub(
+                r'(input double   MR_TP_Pips\s+=\s+)[\d.]+;',
+                f'\\g<1>{value};',
+                content
+            )
+
+    elif adjustment_type == "mr_sl_pips":
+        import re
+        match = re.search(r'input double   MR_SL_Pips\s+=\s+([\d.]+);', content)
+        if match:
+            old_value = match.group(1)
+            new_content = re.sub(
+                r'(input double   MR_SL_Pips\s+=\s+)[\d.]+;',
+                f'\\g<1>{value};',
+                content
+            )
+
+    elif adjustment_type == "mr_lookback":
+        import re
+        match = re.search(r'input int      MR_Lookback\s+=\s+(\d+);', content)
+        if match:
+            old_value = match.group(1)
+            new_content = re.sub(
+                r'(input int      MR_Lookback\s+=\s+)\d+;',
+                f'\\g<1>{int(value)};',
+                content
+            )
+
     elif adjustment_type == "bollinger_desviacion":
         import re
         match = re.search(r'input double   BollingerDesviacion\s+=\s+([\d.]+);', content)
@@ -174,13 +218,17 @@ def get_current_params():
     import re
     params = {}
     patterns = {
-        "RangoMinTokyo": r'input double   RangoMinTokyo\s+=\s+([\d.]+);',
-        "RangoMinEuropa": r'input double   RangoMinEuropa\s+=\s+([\d.]+);',
-        "RangoMinPips": r'input double   RangoMinPips\s+=\s+([\d.]+);',
-        "RSISobrevendido": r'input double   RSISobrevendido\s+=\s+([\d.]+);',
+        "RangoMinTokyo":    r'input double   RangoMinTokyo\s+=\s+([\d.]+);',
+        "RangoMinEuropa":   r'input double   RangoMinEuropa\s+=\s+([\d.]+);',
+        "RangoMinPips":     r'input double   RangoMinPips\s+=\s+([\d.]+);',
+        "RSISobrevendido":  r'input double   RSISobrevendido\s+=\s+([\d.]+);',
         "RSISobrecomprado": r'input double   RSISobrecomprado\s+=\s+([\d.]+);',
         "BollingerDesviacion": r'input double   BollingerDesviacion\s+=\s+([\d.]+);',
-        "LotSize": r'input double   LotSize\s+=\s+([\d.]+);',
+        "LotSize":          r'input double   LotSize\s+=\s+([\d.]+);',
+        "MR_ATR_Mult":      r'input double   MR_ATR_Mult\s+=\s+([\d.]+);',
+        "MR_TP_Pips":       r'input double   MR_TP_Pips\s+=\s+([\d.]+);',
+        "MR_SL_Pips":       r'input double   MR_SL_Pips\s+=\s+([\d.]+);',
+        "MR_Lookback":      r'input int      MR_Lookback\s+=\s+(\d+);',
     }
     
     for param, pattern in patterns.items():
