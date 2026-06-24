@@ -594,6 +594,8 @@ def run_backtest():
     rechazados = []
     sin_cambio = []
 
+    from developer_agent import apply_adjustment as _apply
+
     for tipo, valor in ajustes_a_aplicar:
         curr = params_actuales.get({
             "rango_min_nasdaq":    "RangoMinPips",
@@ -613,17 +615,13 @@ def run_backtest():
             continue
 
         try:
-            resp = requests.post(
-                f"{BASE_URL}/adjust",
-                json={"type": tipo, "value": valor},
-                timeout=15
-            )
-            if resp.status_code == 200 and resp.json().get("status") == "ok":
+            success = _apply(tipo, valor)
+            if success:
                 aplicados.append(f"  {tipo}: {curr} → {valor}")
             else:
-                rechazados.append(f"  {tipo} ({resp.json().get('reason', 'Error')})")
+                rechazados.append(f"  {tipo} (Error al aplicar)")
         except Exception as e:
-            rechazados.append(f"  {tipo} (Error de conexion: {e})")
+            rechazados.append(f"  {tipo} (Error: {e})")
 
     resumen = "RESULTADO DE APLICACION:\n"
     if aplicados:
