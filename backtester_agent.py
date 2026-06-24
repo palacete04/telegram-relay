@@ -7,7 +7,7 @@ from developer_agent import apply_adjustment, get_current_params
 from optimizer_agent import run_optimization
 from verifier_agent import verify_and_apply, verify_all_params
 from scheduler import start_scheduler
-from backtester_agent import run_backtest, start_backtester
+
 
 app = Flask(__name__)
 start_scheduler()
