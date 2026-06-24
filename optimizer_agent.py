@@ -98,19 +98,15 @@ def run_optimization(trades_data, market_data=None):
         send_telegram(msg)
         return {"status": "ok", "adjustments": [], "message": "Sin cambios necesarios"}
 
-    # Aplicar ajustes via el Agente Desarrollador
-    base_url = os.environ.get("BASE_URL", "https://telegram-relay-6x6l.onrender.com")
+    # Aplicar ajustes directamente via el Agente Desarrollador (sin HTTP loop)
+    from developer_agent import apply_adjustment as _apply
     applied = []
     failed = []
 
     for adj in adjustments:
         try:
-            response = requests.post(
-                f"{base_url}/adjust",
-                json={"type": adj["type"], "value": adj["value"]},
-                timeout=15
-            )
-            if response.status_code == 200 and response.json().get("status") == "ok":
+            success = _apply(adj["type"], adj["value"])
+            if success:
                 applied.append(adj)
             else:
                 failed.append(adj)
