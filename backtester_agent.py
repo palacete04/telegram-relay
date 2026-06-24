@@ -1,25 +1,31 @@
-from flask import Flask, request, jsonify
+"""
+BACKTESTER AGENT v4
+- Fix E1 Nasdaq: usa High/Low del dia anterior completo (igual que el EA real)
+- Agrega variante lookback=12 en E6 Mean Reversion
+- Resto identico al v3
+- Corre automaticamente los domingos a las 10:00 AM Argentina
+- Descarga 8 semanas de datos H1 de EUR/USD desde Yahoo Finance
+- Testea todas las variantes de cada estrategia
+- Guarda resultados en disco (persistencia JSON)
+- Auto-aplica los mejores parametros si superan el criterio
+- Notifica por Telegram con resumen y acciones tomadas
+"""
+
 import requests
+import json
 import os
-from datetime import datetime
-from analyst_agent import run_analysis
-from developer_agent import apply_adjustment, get_current_params
-from optimizer_agent import run_optimization
-from verifier_agent import verify_and_apply, verify_all_params
-from scheduler import start_scheduler
+import threading
+import time
+from datetime import datetime, timedelta
 
-
-app = Flask(__name__)
-start_scheduler()
-start_backtester()
-
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8957492846:AAGophSxXOSZGT4Gd1cLTNOICzxpZIH5wEU")
+TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "8957492846:AAGophSxXOSZGT4Gd1cLTNOICzxpZIH5wEU")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6518133529")
+BASE_URL         = os.environ.get("BASE_URL", "https://telegram-relay-6x6l.onrender.com")
+DATA_FILE        = "/tmp/backtester_results.json"
 
-trades = []
-last_heartbeat = None
-HEARTBEAT_TIMEOUT = 45 * 60  # 45 minutos en segundos
-
+# ─────────────────────────────────────────
+# UTILIDADES
+# ─────────────────────────────────────────
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
@@ -28,193 +34,605 @@ def send_telegram(message):
     except Exception as e:
         print(f"Error Telegram: {e}")
 
-def analyze_trades(trades_data):
-    """Agente Monitor con reglas simples - sin costo"""
-    if len(trades_data) < 3:
+def save_results(results):
+    try:
+        with open(DATA_FILE, "w") as f:
+            json.dump(results, f, indent=2, default=str)
+        print(f"Resultados guardados en {DATA_FILE}")
+    except Exception as e:
+        print(f"Error guardando resultados: {e}")
+
+def load_last_results():
+    try:
+        if os.path.exists(DATA_FILE):
+            with open(DATA_FILE, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error cargando resultados: {e}")
+    return None
+
+# ─────────────────────────────────────────
+# DESCARGA DE DATOS
+# ─────────────────────────────────────────
+def get_eurusd_h1(weeks=8):
+    try:
+        end   = datetime.now()
+        start = end - timedelta(weeks=weeks)
+        url   = "https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X"
+        params = {
+            "period1":        int(start.timestamp()),
+            "period2":        int(end.timestamp()),
+            "interval":       "1h",
+            "includePrePost": False
+        }
+        headers  = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, params=params, headers=headers, timeout=20)
+        data     = response.json()
+
+        result     = data["chart"]["result"][0]
+        timestamps = result["timestamp"]
+        q          = result["indicators"]["quote"][0]
+        closes     = q["close"]
+        highs      = q["high"]
+        lows       = q["low"]
+
+        candles = []
+        for i in range(len(timestamps)):
+            if closes[i] is None or highs[i] is None or lows[i] is None:
+                continue
+            dt = datetime.fromtimestamp(timestamps[i])
+            candles.append({
+                "time":       dt,
+                "hour":       dt.hour,
+                "weekday":    dt.weekday(),
+                "date":       dt.date(),
+                "close":      closes[i],
+                "high":       highs[i],
+                "low":        lows[i],
+                "range_pips": round((highs[i] - lows[i]) * 10000, 1)
+            })
+
+        print(f"Descargadas {len(candles)} velas H1")
+        return candles
+    except Exception as e:
+        print(f"Error descargando datos: {e}")
+        return []
+
+# ─────────────────────────────────────────
+# INDICADORES
+# ─────────────────────────────────────────
+def calcular_rsi(closes, period=14):
+    if len(closes) < period + 1:
         return None
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        diff = closes[i] - closes[i-1]
+        gains.append(max(diff, 0))
+        losses.append(max(-diff, 0))
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    if avg_loss == 0:
+        return 100
+    rs = avg_gain / avg_loss
+    return round(100 - (100 / (1 + rs)), 2)
 
-    total = len(trades_data)
-    wins = sum(1 for t in trades_data if t['profit'] > 0)
-    losses = total - wins
-    win_rate = (wins / total * 100)
-    total_profit = sum(t['profit'] for t in trades_data)
+def calcular_atr(candles, period=14):
+    if len(candles) < period + 1:
+        return 0
+    trs = []
+    for i in range(1, len(candles)):
+        tr = max(
+            candles[i]["high"] - candles[i]["low"],
+            abs(candles[i]["high"] - candles[i-1]["close"]),
+            abs(candles[i]["low"]  - candles[i-1]["close"])
+        )
+        trs.append(tr)
+    return sum(trs[-period:]) / period
 
-    # Estadísticas por estrategia
-    by_strategy = {}
-    for t in trades_data:
-        s = t['strategy']
-        if s not in by_strategy:
-            by_strategy[s] = {"wins": 0, "losses": 0, "profit": 0, "consecutive_losses": 0}
-        if t['profit'] > 0:
-            by_strategy[s]['wins'] += 1
-            by_strategy[s]['consecutive_losses'] = 0
+# ─────────────────────────────────────────
+# SIMULACION DE TRADE
+# ─────────────────────────────────────────
+def simular_trade(candles, entry_time, entry_price, tp, sl, side):
+    encontrado = False
+    for c in candles:
+        if c["time"] <= entry_time:
+            continue
+        if not encontrado:
+            encontrado = True
+        if side == "buy":
+            if c["high"] >= tp:
+                return {"win": True,  "pips": round((tp - entry_price) * 10000, 1)}
+            if c["low"]  <= sl:
+                return {"win": False, "pips": round((sl - entry_price) * 10000, 1)}
         else:
-            by_strategy[s]['losses'] += 1
-            by_strategy[s]['consecutive_losses'] += 1
-        by_strategy[s]['profit'] += t['profit']
+            if c["low"]  <= tp:
+                return {"win": True,  "pips": round((entry_price - tp) * 10000, 1)}
+            if c["high"] >= sl:
+                return {"win": False, "pips": round((entry_price - sl) * 10000, 1)}
+    return {"win": False, "pips": 0}
 
-    alerts = []
+def calcular_stats(resultados, label):
+    if not resultados:
+        return {"label": label, "wins": 0, "total": 0, "wr": 0, "pips": 0, "ok": False}
+    wins  = sum(1 for r in resultados if r["win"])
+    total = len(resultados)
+    pips  = round(sum(r["pips"] for r in resultados), 1)
+    wr    = round(wins / total * 100, 1) if total > 0 else 0
+    ok    = wr >= 50 and total >= 8
+    return {"label": label, "wins": wins, "total": total, "wr": wr, "pips": pips, "ok": ok}
 
-    # Regla 1: Win rate global menor al 40%
-    if total >= 5 and win_rate < 40:
-        alerts.append(f"[ALERTA] Win rate bajo: {win_rate:.0f}% ({wins}/{total})")
+# ─────────────────────────────────────────
+# E1: NASDAQ — FIX v4
+# Usa High/Low del dia anterior completo (igual que CopyHigh/CopyLow PERIOD_D1 en MT5)
+# Entrada: desde las 14:00 UTC (9:00 AM ET = 11:00 AM ARG)
+# ─────────────────────────────────────────
+def backtest_nasdaq(candles, rango_min_pips, ratio_tp=1.0, ratio_sl=0.5, label=""):
+    dias = {}
+    for c in candles:
+        d = c["date"]
+        if d not in dias:
+            dias[d] = []
+        dias[d].append(c)
 
-    # Regla 2: P&L total negativo mayor a $10
-    if total_profit < -10:
-        alerts.append(f"[ALERTA] Perdida acumulada: ${total_profit:.2f}")
+    dias_orden = sorted(dias.keys())
+    resultados = []
 
-    # Regla 3: Estrategia con 3 perdidas consecutivas
-    for strategy, stats in by_strategy.items():
-        if stats['consecutive_losses'] >= 3:
-            alerts.append(f"[ALERTA] {strategy}: 3 perdidas consecutivas")
+    for i in range(1, len(dias_orden)):
+        dia_anterior   = dias_orden[i-1]
+        dia_actual     = dias_orden[i]
+        velas_anterior = dias[dia_anterior]
+        velas_actual   = dias[dia_actual]
 
-    # Regla 4: Estrategia con win rate menor al 30%
-    for strategy, stats in by_strategy.items():
-        total_s = stats['wins'] + stats['losses']
-        if total_s >= 4:
-            wr_s = stats['wins'] / total_s * 100
-            if wr_s < 30:
-                alerts.append(f"[ALERTA] {strategy}: win rate muy bajo ({wr_s:.0f}%)")
+        # High/Low del dia anterior completo
+        prev_high = max(v["high"] for v in velas_anterior)
+        prev_low  = min(v["low"]  for v in velas_anterior)
 
-    # Reporte cada 5 operaciones
-    if total % 5 == 0:
-        report = f"[REPORTE] {total} operaciones\n"
-        report += f"Win rate: {win_rate:.0f}% | P&L: ${total_profit:.2f}\n"
-        for s, st in by_strategy.items():
-            report += f"{s}: {st['wins']}G/{st['losses']}P (${st['profit']:.2f})\n"
-        send_telegram(report)
+        rango_pips = (prev_high - prev_low) * 10000
+        if rango_pips < rango_min_pips:
+            continue
 
-    return alerts
+        tp_dist = (prev_high - prev_low) * ratio_tp
+        sl_dist = (prev_high - prev_low) * ratio_sl
 
-@app.route("/", methods=["GET"])
-def home():
-    total = len(trades)
-    wins = sum(1 for t in trades if t['profit'] > 0)
-    total_profit = sum(t['profit'] for t in trades)
-    return {"status": "BreakoutEA Monitor activo", "total": total, "wins": wins, "losses": total-wins, "pnl": round(total_profit, 2)}
+        operado = False
+        for v in velas_actual:
+            if v["hour"] < 14:
+                continue
+            if operado:
+                break
+            if v["high"] > prev_high:
+                entry    = prev_high
+                resultado = simular_trade(candles, v["time"], entry,
+                                          entry + tp_dist, entry - sl_dist, "buy")
+                resultados.append(resultado)
+                operado = True
+            elif v["low"] < prev_low:
+                entry    = prev_low
+                resultado = simular_trade(candles, v["time"], entry,
+                                          entry - tp_dist, entry + sl_dist, "sell")
+                resultados.append(resultado)
+                operado = True
 
-@app.route("/notify", methods=["POST"])
-def notify():
-    data = request.get_json()
-    if not data or "message" not in data:
-        return {"error": "Falta message"}, 400
-    send_telegram(data["message"])
-    return {"status": "ok"}
+    return calcular_stats(resultados, label)
 
-@app.route("/trade", methods=["POST"])
-def register_trade():
-    data = request.get_json()
-    if not data:
-        return {"error": "Sin datos"}, 400
+# ─────────────────────────────────────────
+# E2/E3: BREAKOUT GENERICO (Europa y Tokyo)
+# ─────────────────────────────────────────
+def backtest_breakout(candles, session_hour_range, session_hour_entry, rango_min_pips,
+                       ratio_tp=1.0, ratio_sl=0.5, label=""):
+    dias = {}
+    for c in candles:
+        d = c["date"]
+        if d not in dias:
+            dias[d] = []
+        dias[d].append(c)
 
-    trade = {
-        "time": data.get("time", datetime.now().strftime("%Y-%m-%d %H:%M")),
-        "strategy": data.get("strategy", "Desconocida"),
-        "type": data.get("type", ""),
-        "entry": float(data.get("entry", 0)),
-        "exit_price": float(data.get("exit", 0)),
-        "profit": float(data.get("profit", 0)),
-    }
-    trades.append(trade)
+    dias_orden     = sorted(dias.keys())
+    resultados_dia = []
 
-    # Analizar y enviar alertas
-    alerts = analyze_trades(trades)
-    if alerts:
-        for alert in alerts:
-            send_telegram(alert)
+    for i, dia in enumerate(dias_orden):
+        velas_dia = dias[dia]
 
-    return {"status": "ok", "total": len(trades)}
+        rango_high, rango_low = None, None
+        for v in velas_dia:
+            if v["hour"] == session_hour_range:
+                rango_high = v["high"]
+                rango_low  = v["low"]
+                break
 
-@app.route("/stats", methods=["GET"])
-def stats():
-    if not trades:
-        return {"message": "Sin operaciones aun"}
-    
-    by_strategy = {}
-    for t in trades:
-        s = t['strategy']
-        if s not in by_strategy:
-            by_strategy[s] = {"wins": 0, "losses": 0, "profit": 0}
-        if t['profit'] > 0:
-            by_strategy[s]['wins'] += 1
-        else:
-            by_strategy[s]['losses'] += 1
-        by_strategy[s]['profit'] = round(by_strategy[s]['profit'] + t['profit'], 2)
+        if rango_high is None:
+            continue
 
-    return {
-        "total": len(trades),
-        "pnl_total": round(sum(t['profit'] for t in trades), 2),
-        "win_rate": round(sum(1 for t in trades if t['profit'] > 0) / len(trades) * 100, 1),
-        "por_estrategia": by_strategy
-    }
+        rango_pips = (rango_high - rango_low) * 10000
+        if rango_pips < rango_min_pips:
+            continue
 
-@app.route("/adjust", methods=["POST"])
-def adjust():
-    """Aplica un ajuste al EA - pasa por el Verificador primero"""
-    data = request.get_json()
-    if not data or "type" not in data or "value" not in data:
-        return jsonify({"error": "Falta type o value"}), 400
-    current = get_current_params()
-    success, reason = verify_and_apply(data["type"], data["value"], current)
-    return jsonify({"status": "ok" if success else "rejected", "reason": reason})
+        tp_dist = (rango_high - rango_low) * ratio_tp
+        sl_dist = (rango_high - rango_low) * ratio_sl
 
-@app.route("/heartbeat", methods=["POST"])
-def heartbeat():
-    """Recibe heartbeat del EA cada 30 minutos"""
-    global last_heartbeat
-    last_heartbeat = datetime.now()
-    data = request.get_json() or {}
-    hour_et = data.get("hour_et", "?")
-    print(f"Heartbeat recibido - hora ET: {hour_et}")
-    return jsonify({"status": "ok", "time": str(last_heartbeat)})
+        operado = False
+        for v in velas_dia:
+            if v["hour"] < session_hour_entry:
+                continue
+            if operado:
+                break
+            if v["high"] > rango_high:
+                entry     = rango_high
+                resultado = simular_trade(candles, v["time"], entry,
+                                          entry + tp_dist, entry - sl_dist, "buy")
+                resultados_dia.append(resultado)
+                operado = True
+            elif v["low"] < rango_low:
+                entry     = rango_low
+                resultado = simular_trade(candles, v["time"], entry,
+                                          entry - tp_dist, entry + sl_dist, "sell")
+                resultados_dia.append(resultado)
+                operado = True
 
-@app.route("/heartbeat_status", methods=["GET"])
-def heartbeat_status():
-    """Verifica si el EA sigue activo"""
-    import time
-    if last_heartbeat is None:
-        return jsonify({"status": "sin_datos", "message": "Nunca se recibio heartbeat"})
-    seconds_ago = (datetime.now() - last_heartbeat).total_seconds()
-    if seconds_ago > HEARTBEAT_TIMEOUT:
-        msg = f"[ALERTA] Bot posiblemente detenido - ultimo heartbeat hace {int(seconds_ago/60)} minutos"
-        send_telegram(msg)
-        return jsonify({"status": "alerta", "minutes_ago": int(seconds_ago/60)})
-    return jsonify({"status": "activo", "minutes_ago": int(seconds_ago/60)})
+    return calcular_stats(resultados_dia, label)
 
-@app.route("/verify", methods=["GET"])
-def verify():
-    """Verifica que todos los parámetros actuales sean seguros"""
-    current = get_current_params()
-    ok, issues = verify_all_params(current)
-    return jsonify({"status": "ok" if ok else "issues", "issues": issues, "params": current})
+# ─────────────────────────────────────────
+# E4: RSI
+# ─────────────────────────────────────────
+def backtest_rsi(candles, sobrevendido, sobrecomprado, tp_pips, sl_pips, usar_filtro, label=""):
+    resultados = []
+    closes     = [c["close"] for c in candles]
 
-@app.route("/params", methods=["GET"])
-def params():
-    """Ver parametros actuales del EA"""
-    p = get_current_params()
-    return jsonify(p)
+    def get_ma(idx, period):
+        if idx < period:
+            return None
+        return sum(closes[idx-period:idx]) / period
 
-@app.route("/optimize", methods=["GET"])
-def optimize():
-    """Ejecuta el Agente Optimizador"""
-    if len(trades) < 5:
-        return jsonify({"message": "Necesitas al menos 5 operaciones"})
-    result = run_optimization(trades)
-    return jsonify(result)
+    for i in range(200, len(candles)):
+        c   = candles[i]
+        rsi = calcular_rsi(closes[max(0, i-30):i+1])
+        if rsi is None:
+            continue
 
-@app.route("/analyze_market", methods=["GET"])
-def analyze_market():
-    result = run_analysis(trades)
-    return jsonify(result)
+        ma50  = get_ma(i, 50)
+        ma200 = get_ma(i, 200)
 
-@app.route("/backtest_run", methods=["GET"])
-def backtest_run():
-    """Ejecuta el backtester manualmente sin esperar al domingo"""
-    import threading
-    thread = threading.Thread(target=run_backtest, daemon=True)
+        tp_dist = tp_pips / 10000
+        sl_dist = sl_pips / 10000
+
+        if rsi < sobrevendido:
+            if usar_filtro:
+                if ma50 is None or ma200 is None or not (c["close"] > ma50 > ma200):
+                    continue
+            entry     = c["close"]
+            resultado = simular_trade(candles, c["time"], entry,
+                                       entry + tp_dist, entry - sl_dist, "buy")
+            resultados.append(resultado)
+
+        elif rsi > sobrecomprado:
+            if usar_filtro:
+                if ma50 is None or ma200 is None or not (c["close"] < ma50 < ma200):
+                    continue
+            entry     = c["close"]
+            resultado = simular_trade(candles, c["time"], entry,
+                                       entry - tp_dist, entry + sl_dist, "sell")
+            resultados.append(resultado)
+
+    return calcular_stats(resultados, label)
+
+# ─────────────────────────────────────────
+# E5: BOLLINGER
+# ─────────────────────────────────────────
+def backtest_bollinger(candles, desviacion, tp_pips, sl_pips, usar_filtro, label=""):
+    resultados = []
+    closes     = [c["close"] for c in candles]
+    period     = 20
+
+    for i in range(period + 200, len(candles)):
+        c      = candles[i]
+        window = closes[i-period:i]
+        media  = sum(window) / period
+        std    = (sum((x - media)**2 for x in window) / period) ** 0.5
+        upper  = media + desviacion * std
+        lower  = media - desviacion * std
+
+        ma50  = sum(closes[i-50:i])  / 50  if i >= 50  else None
+        ma200 = sum(closes[i-200:i]) / 200 if i >= 200 else None
+
+        tp_dist = tp_pips / 10000
+        sl_dist = sl_pips / 10000
+
+        if c["close"] < lower:
+            if usar_filtro:
+                if ma50 is None or ma200 is None or not (c["close"] > ma50 > ma200):
+                    continue
+            entry     = c["close"]
+            resultado = simular_trade(candles, c["time"], entry,
+                                       entry + tp_dist, entry - sl_dist, "buy")
+            resultados.append(resultado)
+
+        elif c["close"] > upper:
+            if usar_filtro:
+                if ma50 is None or ma200 is None or not (c["close"] < ma50 < ma200):
+                    continue
+            entry     = c["close"]
+            resultado = simular_trade(candles, c["time"], entry,
+                                       entry - tp_dist, entry + sl_dist, "sell")
+            resultados.append(resultado)
+
+    return calcular_stats(resultados, label)
+
+# ─────────────────────────────────────────
+# E6: MEAN REVERSION
+# ─────────────────────────────────────────
+def backtest_mean_reversion(candles, atr_mult, tp_pips, sl_pips, lookback=8, label=""):
+    resultados = []
+    period_atr = 14
+
+    for i in range(period_atr + lookback, len(candles)):
+        c   = candles[i]
+        atr = calcular_atr(candles[max(0, i-period_atr):i+1])
+        if atr == 0:
+            continue
+
+        closes_window = [x["close"] for x in candles[i-lookback:i]]
+        media         = sum(closes_window) / len(closes_window)
+        umbral        = atr * atr_mult
+
+        tp_dist = tp_pips / 10000
+        sl_dist = sl_pips / 10000
+
+        if c["close"] < media - umbral:
+            entry     = c["close"]
+            resultado = simular_trade(candles, c["time"], entry,
+                                       entry + tp_dist, entry - sl_dist, "buy")
+            resultados.append(resultado)
+
+        elif c["close"] > media + umbral:
+            entry     = c["close"]
+            resultado = simular_trade(candles, c["time"], entry,
+                                       entry - tp_dist, entry + sl_dist, "sell")
+            resultados.append(resultado)
+
+    return calcular_stats(resultados, label)
+
+# ─────────────────────────────────────────
+# RUN PRINCIPAL
+# ─────────────────────────────────────────
+def run_backtest():
+    print("[BACKTESTER v4] Iniciando análisis semanal...")
+    send_telegram("[BACKTESTER v4] Iniciando análisis semanal...\nDescargando datos de las últimas 8 semanas.")
+
+    candles = get_eurusd_h1(weeks=8)
+    if not candles:
+        send_telegram("[BACKTESTER v4] ❌ Error al descargar datos. Se cancela el análisis.")
+        return
+
+    fecha   = datetime.now().strftime("%d/%m/%Y")
+    reporte = f"REPORTE BACKTEST v4 — {fecha}\n"
+    reporte += f"Datos: {len(candles)} velas H1 | Criterio: >=50% wr / >=8 operaciones\n"
+
+    mejores          = {}
+    todos_resultados = {}
+
+    # ── E1: Nasdaq — FIX: usa High/Low dia anterior completo
+    reporte += "\n=== E1: Breakout Nasdaq ===\n"
+    e1_variantes = []
+    for rmin in [15.0, 20.0, 25.0, 30.0]:
+        r   = backtest_nasdaq(candles, rmin, ratio_tp=1.0, ratio_sl=0.5,
+                               label=f"RangoMin={rmin}p")
+        tag = "[OK]" if r["ok"] else "[--]"
+        reporte += f"  {tag} RangoMin={rmin}p -> {r['wins']}/{r['total']} dias | {r['wr']}% | {r['pips']}p\n"
+        e1_variantes.append(r)
+    mejor_e1            = max(e1_variantes, key=lambda x: (x["wr"], x["pips"]))
+    mejores["E1_Nasdaq"] = mejor_e1
+    todos_resultados["E1"] = e1_variantes
+    reporte += f"  Mejor: {mejor_e1['label']} ({mejor_e1['wr']}% wr | {mejor_e1['pips']}p)\n"
+
+    # ── E2: Europa
+    reporte += "\n=== E2: Breakout Europa ===\n"
+    e2_variantes = []
+    for rmin in [5.0, 7.0, 10.0, 12.0]:
+        r   = backtest_breakout(candles, 3, 4, rmin, ratio_tp=1.0, ratio_sl=0.5,
+                                 label=f"RangoMin={rmin}p")
+        tag = "[OK]" if r["ok"] else "[--]"
+        reporte += f"  {tag} RangoMin={rmin}p -> {r['wins']}/{r['total']} dias | {r['wr']}% | {r['pips']}p\n"
+        e2_variantes.append(r)
+    mejor_e2             = max(e2_variantes, key=lambda x: (x["wr"], x["pips"]))
+    mejores["E2_Europa"]  = mejor_e2
+    todos_resultados["E2"] = e2_variantes
+    reporte += f"  Mejor: {mejor_e2['label']} ({mejor_e2['wr']}% wr | {mejor_e2['pips']}p)\n"
+
+    # ── E3: Tokyo
+    reporte += "\n=== E3: Breakout Tokyo ===\n"
+    e3_variantes = []
+    for rmin in [3.0, 5.0, 7.0, 10.0]:
+        r   = backtest_breakout(candles, 23, 0, rmin, ratio_tp=1.0, ratio_sl=0.5,
+                                 label=f"RangoMin={rmin}p")
+        tag = "[OK]" if r["ok"] else "[--]"
+        reporte += f"  {tag} RangoMin={rmin}p -> {r['wins']}/{r['total']} dias | {r['wr']}% | {r['pips']}p\n"
+        e3_variantes.append(r)
+    mejor_e3             = max(e3_variantes, key=lambda x: (x["wr"], x["pips"]))
+    mejores["E3_Tokyo"]   = mejor_e3
+    todos_resultados["E3"] = e3_variantes
+    reporte += f"  Mejor: {mejor_e3['label']} ({mejor_e3['wr']}% wr | {mejor_e3['pips']}p)\n"
+
+    # ── E4: RSI
+    reporte += "\n=== E4: RSI Extremo ===\n"
+    e4_variantes = []
+    for sob, sobc in [(20,80), (25,75), (30,70), (20,75), (25,80), (22,78)]:
+        for filtro in [True, False]:
+            label = f"RSI {sob}/{sobc}_{'con' if filtro else 'sin'}_filtro"
+            r     = backtest_rsi(candles, sob, sobc, tp_pips=30, sl_pips=15,
+                                  usar_filtro=filtro, label=label)
+            tag   = "[OK]" if r["ok"] else "[--]"
+            reporte += f"  {tag} {label} -> {r['wins']}/{r['total']} dias | {r['wr']}% | {r['pips']}p\n"
+            e4_variantes.append((sob, sobc, filtro, r))
+    mejor_e4           = max(e4_variantes, key=lambda x: (x[3]["wr"], x[3]["pips"]))
+    mejores["E4_RSI"]  = {"sob": mejor_e4[0], "sobc": mejor_e4[1], "filtro": mejor_e4[2], "stats": mejor_e4[3]}
+    todos_resultados["E4"] = [x[3] for x in e4_variantes]
+    reporte += f"  Mejor: {mejor_e4[3]['label']} ({mejor_e4[3]['wr']}% wr | {mejor_e4[3]['pips']}p)\n"
+
+    # ── E5: Bollinger
+    reporte += "\n=== E5: Bollinger ===\n"
+    e5_variantes = []
+    for dev in [2.0, 2.5, 3.0, 3.5]:
+        for filtro in [True, False]:
+            label = f"Dev={dev}_{'con' if filtro else 'sin'}_filtro"
+            r     = backtest_bollinger(candles, dev, tp_pips=25, sl_pips=12,
+                                        usar_filtro=filtro, label=label)
+            tag   = "[OK]" if r["ok"] else "[--]"
+            reporte += f"  {tag} {label} -> {r['wins']}/{r['total']} dias | {r['wr']}% | {r['pips']}p\n"
+            e5_variantes.append((dev, filtro, r))
+    mejor_e5               = max(e5_variantes, key=lambda x: (x[2]["wr"], x[2]["pips"]))
+    mejores["E5_Bollinger"] = {"dev": mejor_e5[0], "filtro": mejor_e5[1], "stats": mejor_e5[2]}
+    todos_resultados["E5"]  = [x[2] for x in e5_variantes]
+    reporte += f"  Mejor: {mejor_e5[2]['label']} ({mejor_e5[2]['wr']}% wr | {mejor_e5[2]['pips']}p)\n"
+
+    # ── E6: Mean Reversion — agrega lookback=12
+    reporte += "\n=== E6: Mean Reversion ===\n"
+    e6_variantes = []
+    for atr_mult in [1.2, 1.5, 2.0]:
+        for tp, sl in [(15,20), (20,25), (25,30)]:
+            for lookback in [8, 12]:
+                label = f"ATR{atr_mult}_TP{tp}_SL{sl}_LB{lookback}"
+                r     = backtest_mean_reversion(candles, atr_mult, tp, sl,
+                                                 lookback=lookback, label=label)
+                tag   = "[OK]" if r["ok"] else "[--]"
+                reporte += f"  {tag} {label} -> {r['wins']}/{r['total']} dias | {r['wr']}% | {r['pips']}p\n"
+                e6_variantes.append(r)
+    mejor_e6                  = max(e6_variantes, key=lambda x: (x["wr"], x["pips"]))
+    mejores["E6_MeanReversion"] = mejor_e6
+    todos_resultados["E6"]      = e6_variantes
+    reporte += f"  Mejor: {mejor_e6['label']} ({mejor_e6['wr']}% wr | {mejor_e6['pips']}p)\n"
+
+    # ─────────────────────────────────────────
+    # DETERMINAR PARAMETROS A ACTUALIZAR
+    # ─────────────────────────────────────────
+    reporte += "\n" + "="*30 + "\n"
+
+    params_actuales = {}
+    try:
+        resp = requests.get(f"{BASE_URL}/params", timeout=10)
+        if resp.status_code == 200:
+            params_actuales = resp.json()
+    except:
+        pass
+
+    ajustes_a_aplicar = []
+
+    rsi_stats  = mejores["E4_RSI"]["stats"]
+    nuevo_sob  = mejores["E4_RSI"]["sob"]
+    nuevo_sobc = mejores["E4_RSI"]["sobc"]
+    if rsi_stats["ok"]:
+        if nuevo_sob  != params_actuales.get("RSISobrevendido",  -1):
+            ajustes_a_aplicar.append(("rsi_sobrevendido",  nuevo_sob))
+        if nuevo_sobc != params_actuales.get("RSISobrecomprado", -1):
+            ajustes_a_aplicar.append(("rsi_sobrecomprado", nuevo_sobc))
+
+    boll_stats = mejores["E5_Bollinger"]["stats"]
+    nueva_dev  = mejores["E5_Bollinger"]["dev"]
+    if boll_stats["ok"]:
+        if nueva_dev != params_actuales.get("BollingerDesviacion", -1):
+            ajustes_a_aplicar.append(("bollinger_desviacion", nueva_dev))
+
+    if ajustes_a_aplicar:
+        reporte += f"PARAMETROS A ACTUALIZAR ({len(ajustes_a_aplicar)}):\n"
+        for tipo, valor in ajustes_a_aplicar:
+            reporte += f"  {tipo}: {valor}\n"
+    else:
+        reporte += "Sin cambios de parametros necesarios.\n"
+
+    send_telegram(reporte)
+
+    # ─────────────────────────────────────────
+    # APLICAR AJUSTES
+    # ─────────────────────────────────────────
+    aplicados  = []
+    rechazados = []
+    sin_cambio = []
+
+    for tipo, valor in ajustes_a_aplicar:
+        curr = params_actuales.get({
+            "rsi_sobrevendido":    "RSISobrevendido",
+            "rsi_sobrecomprado":   "RSISobrecomprado",
+            "bollinger_desviacion": "BollingerDesviacion"
+        }.get(tipo, ""), -1)
+
+        if valor == curr:
+            sin_cambio.append(f"  {tipo} = {valor} (sin cambio)")
+            continue
+
+        try:
+            resp = requests.post(
+                f"{BASE_URL}/adjust",
+                json={"type": tipo, "value": valor},
+                timeout=15
+            )
+            if resp.status_code == 200 and resp.json().get("status") == "ok":
+                aplicados.append(f"  {tipo}: {curr} → {valor}")
+            else:
+                rechazados.append(f"  {tipo} ({resp.json().get('reason', 'Error')})")
+        except Exception as e:
+            rechazados.append(f"  {tipo} (Error de conexion: {e})")
+
+    resumen = "RESULTADO DE APLICACION:\n"
+    if aplicados:
+        resumen += "Aplicados:\n" + "\n".join(aplicados) + "\n"
+        resumen += "\n⚠️ ACCION REQUERIDA:\n"
+        resumen += "1. Abri MT5\n"
+        resumen += "2. Descarga BreakoutEA_v9.mq5 de GitHub\n"
+        resumen += "3. Compila con F7 en MetaEditor\n"
+        resumen += "4. Arrastra el EA al grafico EURUSD\n"
+    if rechazados:
+        resumen += "Rechazados:\n" + "\n".join(rechazados) + "\n"
+    if sin_cambio:
+        resumen += "Sin cambio:\n" + "\n".join(sin_cambio) + "\n"
+    if not aplicados and not rechazados and not sin_cambio:
+        resumen += "Sin cambios necesarios.\n"
+
+    send_telegram(resumen)
+
+    save_results({
+        "fecha":              str(datetime.now()),
+        "candles":            len(candles),
+        "mejores":            {
+            k: v if not isinstance(v, dict) or "stats" not in v else {
+                "label": v.get("stats", {}).get("label", ""),
+                "wr":    v.get("stats", {}).get("wr",    0),
+                "pips":  v.get("stats", {}).get("pips",  0),
+                "ok":    v.get("stats", {}).get("ok",    False),
+            }
+            for k, v in mejores.items()
+        },
+        "ajustes_aplicados":  aplicados,
+        "ajustes_rechazados": rechazados,
+    })
+
+    print("[BACKTESTER v4] Análisis completado.")
+
+# ─────────────────────────────────────────
+# SCHEDULER DOMINICAL
+# ─────────────────────────────────────────
+def backtester_loop():
+    print("Backtester scheduler iniciado")
+    last_run = None
+
+    while True:
+        now      = datetime.utcnow()
+        hour_arg = (now.hour - 3) % 24
+        minute   = now.minute
+        weekday  = now.weekday()  # 6 = domingo
+        today    = now.date()
+
+        if weekday == 6 and hour_arg == 10 and minute == 0 and last_run != today:
+            last_run = today
+            print("Domingo 10 AM — ejecutando backtester...")
+            run_backtest()
+            time.sleep(70)
+            continue
+
+        time.sleep(30)
+
+def start_backtester():
+    thread = threading.Thread(target=backtester_loop, daemon=True)
     thread.start()
-    return jsonify({"status": "ok", "message": "Backtester iniciado — resultados por Telegram en ~2 minutos"})
+    print("Backtester scheduler iniciado en background")
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    run_backtest()
