@@ -516,6 +516,28 @@ def run_backtest():
 
     ajustes_a_aplicar = []
 
+    # ── E1 Nasdaq: ajustar RangoMinPips si la mejor variante supera criterio
+    e1_mejor = mejores["E1_Nasdaq"]
+    if e1_mejor["ok"]:
+        nuevo_rmin_nasdaq = float(e1_mejor["label"].replace("RangoMin=", "").replace("p", ""))
+        if nuevo_rmin_nasdaq != params_actuales.get("RangoMinPips", -1):
+            ajustes_a_aplicar.append(("rango_min_nasdaq", nuevo_rmin_nasdaq))
+
+    # ── E2 Europa: ajustar RangoMinEuropa si la mejor variante supera criterio
+    e2_mejor = mejores["E2_Europa"]
+    if e2_mejor["ok"]:
+        nuevo_rmin_europa = float(e2_mejor["label"].replace("RangoMin=", "").replace("p", ""))
+        if nuevo_rmin_europa != params_actuales.get("RangoMinEuropa", -1):
+            ajustes_a_aplicar.append(("rango_min_europa", nuevo_rmin_europa))
+
+    # ── E3 Tokyo: ajustar RangoMinTokyo si la mejor variante supera criterio
+    e3_mejor = mejores["E3_Tokyo"]
+    if e3_mejor["ok"]:
+        nuevo_rmin_tokyo = float(e3_mejor["label"].replace("RangoMin=", "").replace("p", ""))
+        if nuevo_rmin_tokyo != params_actuales.get("RangoMinTokyo", -1):
+            ajustes_a_aplicar.append(("rango_min_tokyo", nuevo_rmin_tokyo))
+
+    # ── E4 RSI: ajustar niveles si supera criterio
     rsi_stats  = mejores["E4_RSI"]["stats"]
     nuevo_sob  = mejores["E4_RSI"]["sob"]
     nuevo_sobc = mejores["E4_RSI"]["sobc"]
@@ -525,11 +547,36 @@ def run_backtest():
         if nuevo_sobc != params_actuales.get("RSISobrecomprado", -1):
             ajustes_a_aplicar.append(("rsi_sobrecomprado", nuevo_sobc))
 
+    # ── E5 Bollinger: ajustar desviacion si supera criterio
     boll_stats = mejores["E5_Bollinger"]["stats"]
     nueva_dev  = mejores["E5_Bollinger"]["dev"]
     if boll_stats["ok"]:
         if nueva_dev != params_actuales.get("BollingerDesviacion", -1):
             ajustes_a_aplicar.append(("bollinger_desviacion", nueva_dev))
+
+    # ── E6 Mean Reversion: ajustar ATR_Mult, TP y SL si encuentra mejor variante
+    e6_mejor = mejores["E6_MeanReversion"]
+    if e6_mejor["ok"]:
+        # Parsear label: ATR{mult}_TP{tp}_SL{sl}_LB{lb}
+        import re
+        m = re.match(r"ATR([\d.]+)_TP(\d+)_SL(\d+)_LB(\d+)", e6_mejor["label"])
+        if m:
+            nuevo_atr  = float(m.group(1))
+            nuevo_tp   = float(m.group(2))
+            nuevo_sl   = float(m.group(3))
+            nuevo_lb   = int(m.group(4))
+            curr_atr   = params_actuales.get("MR_ATR_Mult",  -1)
+            curr_tp    = params_actuales.get("MR_TP_Pips",   -1)
+            curr_sl    = params_actuales.get("MR_SL_Pips",   -1)
+            curr_lb    = params_actuales.get("MR_Lookback",  -1)
+            if nuevo_atr != curr_atr:
+                ajustes_a_aplicar.append(("mr_atr_mult",  nuevo_atr))
+            if nuevo_tp  != curr_tp:
+                ajustes_a_aplicar.append(("mr_tp_pips",   nuevo_tp))
+            if nuevo_sl  != curr_sl:
+                ajustes_a_aplicar.append(("mr_sl_pips",   nuevo_sl))
+            if nuevo_lb  != curr_lb:
+                ajustes_a_aplicar.append(("mr_lookback",  nuevo_lb))
 
     if ajustes_a_aplicar:
         reporte += f"PARAMETROS A ACTUALIZAR ({len(ajustes_a_aplicar)}):\n"
@@ -549,9 +596,16 @@ def run_backtest():
 
     for tipo, valor in ajustes_a_aplicar:
         curr = params_actuales.get({
+            "rango_min_nasdaq":    "RangoMinPips",
+            "rango_min_europa":    "RangoMinEuropa",
+            "rango_min_tokyo":     "RangoMinTokyo",
             "rsi_sobrevendido":    "RSISobrevendido",
             "rsi_sobrecomprado":   "RSISobrecomprado",
-            "bollinger_desviacion": "BollingerDesviacion"
+            "bollinger_desviacion": "BollingerDesviacion",
+            "mr_atr_mult":         "MR_ATR_Mult",
+            "mr_tp_pips":          "MR_TP_Pips",
+            "mr_sl_pips":          "MR_SL_Pips",
+            "mr_lookback":         "MR_Lookback",
         }.get(tipo, ""), -1)
 
         if valor == curr:
