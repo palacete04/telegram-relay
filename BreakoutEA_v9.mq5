@@ -59,7 +59,7 @@ input bool     BollUsarFiltroTendencia = false;
 //--- Estrategia 6: Mean Reversion (optimizada — backtesting 14/06/2026)
 input bool     UsarMeanReversion   = true;
 input int      MR_Lookback         = 8;      // horas para calcular la media
-input double   MR_ATR_Mult         = 1.2;    // multiplicador ATR — mejor resultado backtesting
+input double   MR_ATR_Mult         = 2.0;    // multiplicador ATR — mejor resultado backtesting
 input double   MR_TP_Pips          = 20.0;   // TP optimizado
 input double   MR_SL_Pips          = 25.0;   // SL optimizado
 
