@@ -7,7 +7,7 @@ from developer_agent import apply_adjustment, get_current_params
 from optimizer_agent import run_optimization
 from verifier_agent import verify_and_apply, verify_all_params
 from scheduler import start_scheduler
-from backtester_agent import start_backtester, run_backtest, load_last_results
+from backtester_agent import run_backtest, start_backtester
 
 app = Flask(__name__)
 start_scheduler()
@@ -29,7 +29,7 @@ def send_telegram(message):
         print(f"Error Telegram: {e}")
 
 def analyze_trades(trades_data):
-    """Agente Monitor con reglas simples"""
+    """Agente Monitor con reglas simples - sin costo"""
     if len(trades_data) < 3:
         return None
 
@@ -39,6 +39,7 @@ def analyze_trades(trades_data):
     win_rate = (wins / total * 100)
     total_profit = sum(t['profit'] for t in trades_data)
 
+    # Estadísticas por estrategia
     by_strategy = {}
     for t in trades_data:
         s = t['strategy']
@@ -54,16 +55,20 @@ def analyze_trades(trades_data):
 
     alerts = []
 
+    # Regla 1: Win rate global menor al 40%
     if total >= 5 and win_rate < 40:
         alerts.append(f"[ALERTA] Win rate bajo: {win_rate:.0f}% ({wins}/{total})")
 
+    # Regla 2: P&L total negativo mayor a $10
     if total_profit < -10:
         alerts.append(f"[ALERTA] Perdida acumulada: ${total_profit:.2f}")
 
+    # Regla 3: Estrategia con 3 perdidas consecutivas
     for strategy, stats in by_strategy.items():
         if stats['consecutive_losses'] >= 3:
             alerts.append(f"[ALERTA] {strategy}: 3 perdidas consecutivas")
 
+    # Regla 4: Estrategia con win rate menor al 30%
     for strategy, stats in by_strategy.items():
         total_s = stats['wins'] + stats['losses']
         if total_s >= 4:
@@ -71,6 +76,7 @@ def analyze_trades(trades_data):
             if wr_s < 30:
                 alerts.append(f"[ALERTA] {strategy}: win rate muy bajo ({wr_s:.0f}%)")
 
+    # Reporte cada 5 operaciones
     if total % 5 == 0:
         report = f"[REPORTE] {total} operaciones\n"
         report += f"Win rate: {win_rate:.0f}% | P&L: ${total_profit:.2f}\n"
@@ -111,6 +117,7 @@ def register_trade():
     }
     trades.append(trade)
 
+    # Analizar y enviar alertas
     alerts = analyze_trades(trades)
     if alerts:
         for alert in alerts:
@@ -143,6 +150,7 @@ def stats():
 
 @app.route("/adjust", methods=["POST"])
 def adjust():
+    """Aplica un ajuste al EA - pasa por el Verificador primero"""
     data = request.get_json()
     if not data or "type" not in data or "value" not in data:
         return jsonify({"error": "Falta type o value"}), 400
@@ -152,6 +160,7 @@ def adjust():
 
 @app.route("/heartbeat", methods=["POST"])
 def heartbeat():
+    """Recibe heartbeat del EA cada 30 minutos"""
     global last_heartbeat
     last_heartbeat = datetime.now()
     data = request.get_json() or {}
@@ -161,6 +170,8 @@ def heartbeat():
 
 @app.route("/heartbeat_status", methods=["GET"])
 def heartbeat_status():
+    """Verifica si el EA sigue activo"""
+    import time
     if last_heartbeat is None:
         return jsonify({"status": "sin_datos", "message": "Nunca se recibio heartbeat"})
     seconds_ago = (datetime.now() - last_heartbeat).total_seconds()
@@ -172,17 +183,20 @@ def heartbeat_status():
 
 @app.route("/verify", methods=["GET"])
 def verify():
+    """Verifica que todos los parámetros actuales sean seguros"""
     current = get_current_params()
     ok, issues = verify_all_params(current)
     return jsonify({"status": "ok" if ok else "issues", "issues": issues, "params": current})
 
 @app.route("/params", methods=["GET"])
 def params():
+    """Ver parametros actuales del EA"""
     p = get_current_params()
     return jsonify(p)
 
 @app.route("/optimize", methods=["GET"])
 def optimize():
+    """Ejecuta el Agente Optimizador"""
     if len(trades) < 5:
         return jsonify({"message": "Necesitas al menos 5 operaciones"})
     result = run_optimization(trades)
@@ -193,21 +207,13 @@ def analyze_market():
     result = run_analysis(trades)
     return jsonify(result)
 
-@app.route("/backtest", methods=["GET"])
-def backtest_status():
-    """Ver resultados del ultimo backtest"""
-    results = load_last_results()
-    if not results:
-        return jsonify({"message": "Sin resultados de backtest aun"})
-    return jsonify(results)
-
-@app.route("/backtest/run", methods=["POST"])
+@app.route("/backtest_run", methods=["GET"])
 def backtest_run():
-    """Disparar backtest manualmente"""
+    """Ejecuta el backtester manualmente sin esperar al domingo"""
     import threading
-    t = threading.Thread(target=run_backtest, daemon=True)
-    t.start()
-    return jsonify({"status": "ok", "message": "Backtest iniciado en background"})
+    thread = threading.Thread(target=run_backtest, daemon=True)
+    thread.start()
+    return jsonify({"status": "ok", "message": "Backtester iniciado — resultados por Telegram en ~2 minutos"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
