@@ -60,7 +60,7 @@ input bool     BollUsarFiltroTendencia = false;
 input bool     UsarMeanReversion   = true;
 input int      MR_Lookback         = 8;      // horas para calcular la media
 input double   MR_ATR_Mult         = 1.2;    // multiplicador ATR — mejor resultado backtesting
-input double   MR_TP_Pips          = 25.0;   // TP optimizado
+input double   MR_TP_Pips          = 20.0;   // TP optimizado
 input double   MR_SL_Pips          = 30.0;   // SL optimizado
 
 //--- Filtros generales (aplican a breakouts E1/E2/E3)
