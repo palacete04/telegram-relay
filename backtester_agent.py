@@ -392,19 +392,108 @@ def backtest_mean_reversion(candles, atr_mult, tp_pips, sl_pips, lookback=8, lab
     return calcular_stats(resultados, label)
 
 # ─────────────────────────────────────────
+# E7: CONNORS RSI-2 MEAN REVERSION
+# RSI de periodo 2, umbrales 5/95, filtro SMA-200
+# Diferente al RSI extremo existente: usa RSI(2) muy corto
+# que detecta sobrecompra/sobreventa extrema de corto plazo
+# ─────────────────────────────────────────
+def backtest_connors_rsi2(candles, rsi_buy=5, rsi_sell=95, tp_pips=20, sl_pips=15, label=""):
+    resultados = []
+    closes     = [c["close"] for c in candles]
+    period_rsi = 2
+    period_ma  = 200
+    period_exit = 5  # SMA-5 para salida
+
+    for i in range(period_ma + 10, len(candles)):
+        c = candles[i]
+
+        # SMA-200 como filtro de tendencia
+        ma200 = sum(closes[i-period_ma:i]) / period_ma
+
+        # RSI(2)
+        rsi = calcular_rsi(closes[max(0, i-20):i+1], period=period_rsi)
+        if rsi is None:
+            continue
+
+        tp_dist = tp_pips / 10000
+        sl_dist = sl_pips / 10000
+
+        # BUY: RSI(2) < 5 Y precio > SMA-200 (tendencia alcista)
+        if rsi < rsi_buy and c["close"] > ma200:
+            entry     = c["close"]
+            resultado = simular_trade(candles, c["time"], entry,
+                                       entry + tp_dist, entry - sl_dist, "buy")
+            resultados.append(resultado)
+
+        # SELL: RSI(2) > 95 Y precio < SMA-200 (tendencia bajista)
+        elif rsi > rsi_sell and c["close"] < ma200:
+            entry     = c["close"]
+            resultado = simular_trade(candles, c["time"], entry,
+                                       entry - tp_dist, entry + sl_dist, "sell")
+            resultados.append(resultado)
+
+    return calcular_stats(resultados, label)
+
+# ─────────────────────────────────────────
+# E8: DONCHIAN CHANNEL BREAKOUT CONTINUO
+# Rompe el máximo/mínimo de N velas en cualquier momento
+# Diferente a los breakouts por horario (E1/E2/E3)
+# Basado en investigación MQL5: mejor en H1, periodo 10-20
+# usando precios de cierre (no high/low) para evitar spikes
+# ─────────────────────────────────────────
+def backtest_donchian(candles, period=12, tp_pips=60, sl_pips=40, usar_filtro_ma200=True, label=""):
+    resultados = []
+    closes     = [c["close"] for c in candles]
+
+    for i in range(period + 200, len(candles)):
+        c = candles[i]
+
+        # Canal Donchian usando precios de CIERRE (no high/low)
+        # según investigación MQL5, evita distorsión por spikes en EUR/USD
+        ventana_closes = closes[i-period:i]
+        don_high = max(ventana_closes)
+        don_low  = min(ventana_closes)
+
+        # Filtro SMA-200
+        ma200 = sum(closes[i-200:i]) / 200 if usar_filtro_ma200 else None
+
+        tp_dist = tp_pips / 10000
+        sl_dist = sl_pips / 10000
+
+        # BUY: precio de cierre rompe el máximo del canal
+        if c["close"] > don_high:
+            if usar_filtro_ma200 and ma200 and c["close"] < ma200:
+                continue  # solo comprar si está sobre SMA-200
+            entry     = c["close"]
+            resultado = simular_trade(candles, c["time"], entry,
+                                       entry + tp_dist, entry - sl_dist, "buy")
+            resultados.append(resultado)
+
+        # SELL: precio de cierre rompe el mínimo del canal
+        elif c["close"] < don_low:
+            if usar_filtro_ma200 and ma200 and c["close"] > ma200:
+                continue  # solo vender si está bajo SMA-200
+            entry     = c["close"]
+            resultado = simular_trade(candles, c["time"], entry,
+                                       entry - tp_dist, entry + sl_dist, "sell")
+            resultados.append(resultado)
+
+    return calcular_stats(resultados, label)
+
+# ─────────────────────────────────────────
 # RUN PRINCIPAL
 # ─────────────────────────────────────────
 def run_backtest():
-    print("[BACKTESTER v4] Iniciando análisis semanal...")
-    send_telegram("[BACKTESTER v4] Iniciando análisis semanal...\nDescargando datos de las últimas 8 semanas.")
+    print("[BACKTESTER v5] Iniciando análisis semanal...")
+    send_telegram("[BACKTESTER v5] Iniciando análisis semanal...\nDescargando datos de las últimas 8 semanas.")
 
     candles = get_eurusd_h1(weeks=8)
     if not candles:
-        send_telegram("[BACKTESTER v4] ❌ Error al descargar datos. Se cancela el análisis.")
+        send_telegram("[BACKTESTER v5] ❌ Error al descargar datos. Se cancela el análisis.")
         return
 
     fecha   = datetime.now().strftime("%d/%m/%Y")
-    reporte = f"REPORTE BACKTEST v4 — {fecha}\n"
+    reporte = f"REPORTE BACKTEST v5 — {fecha}\n"
     reporte += f"Datos: {len(candles)} velas H1 | Criterio: >=50% wr / >=8 operaciones\n"
 
     mejores          = {}
@@ -500,6 +589,37 @@ def run_backtest():
     mejores["E6_MeanReversion"] = mejor_e6
     todos_resultados["E6"]      = e6_variantes
     reporte += f"  Mejor: {mejor_e6['label']} ({mejor_e6['wr']}% wr | {mejor_e6['pips']}p)\n"
+
+    # ── E7: Connors RSI-2 Mean Reversion (NUEVA)
+    reporte += "\n=== E7: Connors RSI-2 (NUEVA) ===\n"
+    e7_variantes = []
+    for rsi_buy, rsi_sell in [(5, 95), (3, 97), (10, 90)]:
+        for tp, sl in [(15, 12), (20, 15), (25, 20)]:
+            label = f"RSI2_{rsi_buy}/{rsi_sell}_TP{tp}_SL{sl}"
+            r     = backtest_connors_rsi2(candles, rsi_buy, rsi_sell, tp, sl, label=label)
+            tag   = "[OK]" if r["ok"] else "[--]"
+            reporte += f"  {tag} {label} -> {r['wins']}/{r['total']} | {r['wr']}% | {r['pips']}p\n"
+            e7_variantes.append(r)
+    mejor_e7                = max(e7_variantes, key=lambda x: (x["wr"], x["pips"]))
+    mejores["E7_ConnorsRSI2"] = mejor_e7
+    todos_resultados["E7"]    = e7_variantes
+    reporte += f"  Mejor: {mejor_e7['label']} ({mejor_e7['wr']}% wr | {mejor_e7['pips']}p)\n"
+
+    # ── E8: Donchian Channel Breakout (NUEVA)
+    reporte += "\n=== E8: Donchian Channel (NUEVA) ===\n"
+    e8_variantes = []
+    for period in [10, 12, 15, 20]:
+        for tp, sl in [(40, 30), (60, 40), (80, 50)]:
+            for filtro in [True, False]:
+                label = f"Don{period}_TP{tp}_SL{sl}_{'ma200' if filtro else 'libre'}"
+                r     = backtest_donchian(candles, period, tp, sl, filtro, label=label)
+                tag   = "[OK]" if r["ok"] else "[--]"
+                reporte += f"  {tag} {label} -> {r['wins']}/{r['total']} | {r['wr']}% | {r['pips']}p\n"
+                e8_variantes.append(r)
+    mejor_e8               = max(e8_variantes, key=lambda x: (x["wr"], x["pips"]))
+    mejores["E8_Donchian"]  = mejor_e8
+    todos_resultados["E8"]  = e8_variantes
+    reporte += f"  Mejor: {mejor_e8['label']} ({mejor_e8['wr']}% wr | {mejor_e8['pips']}p)\n"
 
     # ─────────────────────────────────────────
     # DETERMINAR PARAMETROS A ACTUALIZAR
