@@ -705,7 +705,17 @@ def run_backtest():
     else:
         reporte += "Sin cambios de parametros necesarios.\n"
 
-    send_telegram(reporte)
+    # Enviar reporte dividido en chunks de 4000 chars (limite Telegram es 4096)
+    MAX_LEN = 4000
+    chunk = ""
+    for linea in reporte.split("\n"):
+        if len(chunk) + len(linea) + 1 > MAX_LEN:
+            send_telegram(chunk)
+            chunk = linea + "\n"
+        else:
+            chunk += linea + "\n"
+    if chunk.strip():
+        send_telegram(chunk)
 
     # ─────────────────────────────────────────
     # APLICAR AJUSTES
