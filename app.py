@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import requests
 import os
+import json
 from datetime import datetime
 from analyst_agent import run_analysis
 from developer_agent import apply_adjustment, get_current_params
@@ -15,8 +16,32 @@ start_backtester()
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8957492846:AAGophSxXOSZGT4Gd1cLTNOICzxpZIH5wEU")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6518133529")
+TRADES_FILE = "/tmp/trades_history.json"
 
-trades = []
+# ─────────────────────────────────────────
+# PERSISTENCIA DE OPERACIONES
+# ─────────────────────────────────────────
+def load_trades():
+    """Carga el historial de operaciones desde disco"""
+    try:
+        if os.path.exists(TRADES_FILE):
+            with open(TRADES_FILE, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error cargando trades: {e}")
+    return []
+
+def save_trades(trades_data):
+    """Guarda el historial de operaciones en disco"""
+    try:
+        with open(TRADES_FILE, "w") as f:
+            json.dump(trades_data, f, indent=2, default=str)
+    except Exception as e:
+        print(f"Error guardando trades: {e}")
+
+# Cargar trades al iniciar (persisten entre reinicios de Render)
+trades = load_trades()
+print(f"Trades cargados desde disco: {len(trades)}")
 last_heartbeat = None
 HEARTBEAT_TIMEOUT = 45 * 60  # 45 minutos en segundos
 
@@ -116,6 +141,7 @@ def register_trade():
         "profit": float(data.get("profit", 0)),
     }
     trades.append(trade)
+    save_trades(trades)  # persistir en disco
 
     # Analizar y enviar alertas
     alerts = analyze_trades(trades)
@@ -206,6 +232,61 @@ def optimize():
 def analyze_market():
     result = run_analysis(trades)
     return jsonify(result)
+
+@app.route("/history", methods=["GET"])
+def history():
+    """Historial completo de operaciones — persiste entre reinicios"""
+    if not trades:
+        return jsonify({"message": "Sin operaciones registradas", "total": 0})
+
+    wins  = sum(1 for t in trades if t['profit'] > 0)
+    total = len(trades)
+    pnl   = round(sum(t['profit'] for t in trades), 2)
+    wr    = round(wins / total * 100, 1) if total > 0 else 0
+
+    by_strategy = {}
+    for t in trades:
+        s = t['strategy']
+        if s not in by_strategy:
+            by_strategy[s] = {"wins": 0, "losses": 0, "profit": 0}
+        if t['profit'] > 0:
+            by_strategy[s]['wins'] += 1
+        else:
+            by_strategy[s]['losses'] += 1
+        by_strategy[s]['profit'] = round(by_strategy[s]['profit'] + t['profit'], 2)
+
+    return jsonify({
+        "total":        total,
+        "wins":         wins,
+        "losses":       total - wins,
+        "win_rate":     wr,
+        "pnl_total":    pnl,
+        "por_estrategia": by_strategy,
+        "ultimas_5":    trades[-5:]
+    })
+
+@app.route("/daily_report", methods=["GET"])
+def daily_report():
+    """Reporte del dia actual"""
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    trades_hoy = [t for t in trades if t.get("time", "").startswith(hoy)]
+
+    if not trades_hoy:
+        return jsonify({"message": f"Sin operaciones hoy ({hoy})", "total": 0})
+
+    wins  = sum(1 for t in trades_hoy if t['profit'] > 0)
+    total = len(trades_hoy)
+    pnl   = round(sum(t['profit'] for t in trades_hoy), 2)
+
+    return jsonify({
+        "fecha":     hoy,
+        "total":     total,
+        "wins":      wins,
+        "losses":    total - wins,
+        "win_rate":  round(wins / total * 100, 1) if total > 0 else 0,
+        "pnl_hoy":   pnl,
+        "operaciones": trades_hoy
+    })
 
 @app.route("/backtest_run", methods=["GET"])
 def backtest_run():
