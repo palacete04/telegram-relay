@@ -17,6 +17,7 @@ start_backtester()
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8957492846:AAGophSxXOSZGT4Gd1cLTNOICzxpZIH5wEU")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6518133529")
 TRADES_FILE = "/tmp/trades_history.json"
+HEARTBEAT_FILE = "/tmp/last_heartbeat.json"
 
 # ─────────────────────────────────────────
 # PERSISTENCIA DE OPERACIONES
@@ -39,10 +40,34 @@ def save_trades(trades_data):
     except Exception as e:
         print(f"Error guardando trades: {e}")
 
-# Cargar trades al iniciar (persisten entre reinicios de Render)
+# ─────────────────────────────────────────
+# PERSISTENCIA DE HEARTBEAT
+# ─────────────────────────────────────────
+def load_heartbeat():
+    """Carga el ultimo heartbeat desde disco"""
+    try:
+        if os.path.exists(HEARTBEAT_FILE):
+            with open(HEARTBEAT_FILE, "r") as f:
+                data = json.load(f)
+                return datetime.fromisoformat(data["timestamp"]), data.get("balance", 0)
+    except Exception as e:
+        print(f"Error cargando heartbeat: {e}")
+    return None, 0
+
+def save_heartbeat(timestamp, balance=0):
+    """Guarda el ultimo heartbeat en disco"""
+    try:
+        with open(HEARTBEAT_FILE, "w") as f:
+            json.dump({"timestamp": timestamp.isoformat(), "balance": balance}, f)
+    except Exception as e:
+        print(f"Error guardando heartbeat: {e}")
+
+# Cargar trades y heartbeat al iniciar
 trades = load_trades()
 print(f"Trades cargados desde disco: {len(trades)}")
-last_heartbeat = None
+last_heartbeat, last_balance = load_heartbeat()
+if last_heartbeat:
+    print(f"Ultimo heartbeat cargado: {last_heartbeat} | Balance: {last_balance}")
 HEARTBEAT_TIMEOUT = 45 * 60  # 45 minutos en segundos
 
 def send_telegram(message):
@@ -186,26 +211,28 @@ def adjust():
 
 @app.route("/heartbeat", methods=["POST"])
 def heartbeat():
-    """Recibe heartbeat del EA cada 30 minutos"""
-    global last_heartbeat
+    """Recibe heartbeat del EA cada 30 minutos — incluye balance"""
+    global last_heartbeat, last_balance
     last_heartbeat = datetime.now()
     data = request.get_json() or {}
-    hour_et = data.get("hour_et", "?")
-    print(f"Heartbeat recibido - hora ET: {hour_et}")
+    hour_et  = data.get("hour_et", "?")
+    balance  = float(data.get("balance", 0))
+    last_balance = balance
+    save_heartbeat(last_heartbeat, balance)
+    print(f"Heartbeat recibido - hora ET: {hour_et} | Balance: {balance}")
     return jsonify({"status": "ok", "time": str(last_heartbeat)})
 
 @app.route("/heartbeat_status", methods=["GET"])
 def heartbeat_status():
     """Verifica si el EA sigue activo"""
-    import time
     if last_heartbeat is None:
         return jsonify({"status": "sin_datos", "message": "Nunca se recibio heartbeat"})
     seconds_ago = (datetime.now() - last_heartbeat).total_seconds()
     if seconds_ago > HEARTBEAT_TIMEOUT:
         msg = f"[ALERTA] Bot posiblemente detenido - ultimo heartbeat hace {int(seconds_ago/60)} minutos"
         send_telegram(msg)
-        return jsonify({"status": "alerta", "minutes_ago": int(seconds_ago/60)})
-    return jsonify({"status": "activo", "minutes_ago": int(seconds_ago/60)})
+        return jsonify({"status": "alerta", "minutes_ago": int(seconds_ago/60), "balance": last_balance})
+    return jsonify({"status": "activo", "minutes_ago": int(seconds_ago/60), "balance": last_balance})
 
 @app.route("/verify", methods=["GET"])
 def verify():
