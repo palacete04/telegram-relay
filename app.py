@@ -260,15 +260,20 @@ def heartbeat():
 
 @app.route("/heartbeat_status", methods=["GET"])
 def heartbeat_status():
-    """Verifica si el EA sigue activo"""
-    if last_heartbeat is None:
+    """Verifica si el EA sigue activo — lee de GitHub para sobrevivir reinicios"""
+    # Usar last_heartbeat en memoria si está disponible, sino leer de GitHub
+    hb_time = last_heartbeat
+    hb_balance = last_balance
+    if hb_time is None:
+        hb_time, hb_balance = load_heartbeat_github()
+    if hb_time is None:
         return jsonify({"status": "sin_datos", "message": "Nunca se recibio heartbeat"})
-    seconds_ago = (datetime.now() - last_heartbeat).total_seconds()
+    seconds_ago = (datetime.now() - hb_time).total_seconds()
     if seconds_ago > HEARTBEAT_TIMEOUT:
         msg = f"[ALERTA] Bot posiblemente detenido - ultimo heartbeat hace {int(seconds_ago/60)} minutos"
         send_telegram(msg)
-        return jsonify({"status": "alerta", "minutes_ago": int(seconds_ago/60), "balance": last_balance})
-    return jsonify({"status": "activo", "minutes_ago": int(seconds_ago/60), "balance": last_balance})
+        return jsonify({"status": "alerta", "minutes_ago": int(seconds_ago/60), "balance": hb_balance})
+    return jsonify({"status": "activo", "minutes_ago": int(seconds_ago/60), "balance": hb_balance})
 
 @app.route("/verify", methods=["GET"])
 def verify():
