@@ -248,12 +248,11 @@ def adjust():
 def heartbeat():
     """Recibe heartbeat del EA — persiste en GitHub para sobrevivir reinicios"""
     global last_heartbeat, last_balance
-    last_heartbeat = datetime.now()
+    last_heartbeat = datetime.utcnow()  # siempre UTC
     data = request.get_json() or {}
     hour_et      = data.get("hour_et", "?")
     balance      = float(data.get("balance", 0))
     last_balance = balance
-    # Guardar en GitHub (persiste entre reinicios de Render)
     save_heartbeat_github(last_heartbeat, balance)
     print(f"Heartbeat recibido - hora ET: {hour_et} | Balance: {balance}")
     return jsonify({"status": "ok", "time": str(last_heartbeat)})
@@ -264,7 +263,7 @@ def heartbeat_status():
     hb_time, hb_balance = load_heartbeat_github()
     if hb_time is None:
         return jsonify({"status": "sin_datos", "message": "Nunca se recibio heartbeat"})
-    seconds_ago = (datetime.now() - hb_time).total_seconds()
+    seconds_ago = (datetime.utcnow() - hb_time).total_seconds()
     if seconds_ago > HEARTBEAT_TIMEOUT:
         msg = f"[ALERTA] Bot posiblemente detenido - ultimo heartbeat hace {int(seconds_ago/60)} minutos"
         send_telegram(msg)
