@@ -260,12 +260,8 @@ def heartbeat():
 
 @app.route("/heartbeat_status", methods=["GET"])
 def heartbeat_status():
-    """Verifica si el EA sigue activo — lee de GitHub para sobrevivir reinicios"""
-    # Usar last_heartbeat en memoria si está disponible, sino leer de GitHub
-    hb_time = last_heartbeat
-    hb_balance = last_balance
-    if hb_time is None:
-        hb_time, hb_balance = load_heartbeat_github()
+    """Verifica si el EA sigue activo — siempre lee de GitHub para ser preciso"""
+    hb_time, hb_balance = load_heartbeat_github()
     if hb_time is None:
         return jsonify({"status": "sin_datos", "message": "Nunca se recibio heartbeat"})
     seconds_ago = (datetime.now() - hb_time).total_seconds()
