@@ -14,8 +14,8 @@ app = Flask(__name__)
 start_scheduler()
 start_backtester()
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8957492846:AAGophSxXOSZGT4Gd1cLTNOICzxpZIH5wEU")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6518133529")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 TRADES_FILE = "/tmp/trades_history.json"
 HEARTBEAT_GITHUB_FILE = "heartbeat_status.json"
 
