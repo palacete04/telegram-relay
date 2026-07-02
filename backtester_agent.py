@@ -18,8 +18,8 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "8957492846:AAGophSxXOSZGT4Gd1cLTNOICzxpZIH5wEU")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6518133529")
+TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 BASE_URL         = os.environ.get("BASE_URL", "https://telegram-relay-6x6l.onrender.com")
 DATA_FILE        = "/tmp/backtester_results.json"
 
@@ -724,7 +724,7 @@ def run_backtest():
     rechazados = []
     sin_cambio = []
 
-    from developer_agent import apply_adjustment as _apply
+    from verifier_agent import verify_and_apply
 
     for tipo, valor in ajustes_a_aplicar:
         curr = params_actuales.get({
@@ -745,11 +745,11 @@ def run_backtest():
             continue
 
         try:
-            success = _apply(tipo, valor)
+            success, reason = verify_and_apply(tipo, valor, params_actuales)
             if success:
                 aplicados.append(f"  {tipo}: {curr} → {valor}")
             else:
-                rechazados.append(f"  {tipo} (Error al aplicar)")
+                rechazados.append(f"  {tipo} (Rechazado: {reason})")
         except Exception as e:
             rechazados.append(f"  {tipo} (Error: {e})")
 

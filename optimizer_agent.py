@@ -1,8 +1,8 @@
 import requests
 import os
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8957492846:AAGophSxXOSZGT4Gd1cLTNOICzxpZIH5wEU")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6518133529")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -98,18 +98,21 @@ def run_optimization(trades_data, market_data=None):
         send_telegram(msg)
         return {"status": "ok", "adjustments": [], "message": "Sin cambios necesarios"}
 
-    # Aplicar ajustes directamente via el Agente Desarrollador (sin HTTP loop)
-    from developer_agent import apply_adjustment as _apply
+    # Verificar y aplicar cada ajuste via el Agente Verificador (respeta SAFE_LIMITS y MAX_CHANGE_PCT)
+    from verifier_agent import verify_and_apply
+    from developer_agent import get_current_params
     applied = []
     failed = []
 
     for adj in adjustments:
         try:
-            success = _apply(adj["type"], adj["value"])
+            current_params = get_current_params()
+            success, reason = verify_and_apply(adj["type"], adj["value"], current_params)
             if success:
                 applied.append(adj)
             else:
                 failed.append(adj)
+                print(f"Ajuste rechazado por el Verificador: {adj['type']} -> {reason}")
         except Exception as e:
             failed.append(adj)
             print(f"Error aplicando ajuste: {e}")
