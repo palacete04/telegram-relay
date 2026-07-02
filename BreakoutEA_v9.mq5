@@ -13,10 +13,6 @@ input double   LotSize             = 0.01;
 input int      ServerOffset        = 1;
 input bool     ModoDemo            = false;
 
-//--- Telegram
-input string   TelegramToken       = "8957492846:AAGophSxXOSZGT4Gd1cLTNOICzxpZIH5wEU";
-input string   TelegramChatID      = "6518133529";
-
 //--- Estrategia 1: Nasdaq
 input bool     UsarEstrategia1     = true;
 input int      NasdaqEntryHour     = 9;
@@ -594,11 +590,45 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          long dealEntry=(long)HistoryDealGetInteger(dealTicket,DEAL_ENTRY);
          if(dealEntry==DEAL_ENTRY_OUT)
          {
-            double dealProfit=HistoryDealGetDouble(dealTicket,DEAL_PROFIT);
+            double dealProfit    = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+            double exitPrice     = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+            long   closeType     = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+            string tipoOperacion = (closeType == DEAL_TYPE_SELL) ? "BUY" : "SELL";
+
+            // Se busca el deal de APERTURA de esta posicion para el precio de
+            // entrada y el comentario real: el deal de cierre automatico (TP/SL)
+            // suele venir con el comentario reescrito por el broker (ej. "[tp]").
+            double entryPrice = 0;
+            string comentario = "";
+            long   positionId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+            if(HistorySelectByPosition(positionId))
+            {
+               int totalDeals = HistoryDealsTotal();
+               for(int i = 0; i < totalDeals; i++)
+               {
+                  ulong dt = HistoryDealGetTicket(i);
+                  if((long)HistoryDealGetInteger(dt, DEAL_ENTRY) == DEAL_ENTRY_IN)
+                  {
+                     entryPrice = HistoryDealGetDouble(dt, DEAL_PRICE);
+                     comentario = HistoryDealGetString(dt, DEAL_COMMENT);
+                     break;
+                  }
+               }
+            }
+
+            string estrategia = "Desconocida";
+            if(StringFind(comentario, "Nasdaq") >= 0)      estrategia = "Nasdaq";
+            else if(StringFind(comentario, "Europa") >= 0) estrategia = "Europa";
+            else if(StringFind(comentario, "Tokyo") >= 0)  estrategia = "Tokyo";
+            else if(StringFind(comentario, "RSI") >= 0)    estrategia = "RSI";
+            else if(StringFind(comentario, "Boll") >= 0)   estrategia = "Bollinger";
+            else if(StringFind(comentario, "MR") >= 0)     estrategia = "MeanReversion";
+
             string emoji=dealProfit>=0?"✅":"❌";
-            string msg=emoji+" Operacion cerrada\nResultado: "+DoubleToString(dealProfit,2)+" USD";
+            string msg=emoji+" Operacion cerrada ("+estrategia+")\nResultado: "+DoubleToString(dealProfit,2)+" USD";
             SendTelegram(msg);
-            Print("Operacion cerrada. P&L: ",dealProfit);
+            SendTradeData(estrategia, tipoOperacion, entryPrice, exitPrice, dealProfit, 0, 0);
+            Print("Operacion cerrada. Estrategia:",estrategia," P&L: ",dealProfit);
          }
       }
       if(trans.order==ticketNasdaq) { tradeNasdaqOpen=false; RefreshPosicionCache(); }
