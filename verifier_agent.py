@@ -25,6 +25,13 @@ SAFE_LIMITS = {
     "mr_tp_pips":          {"min": 10.0, "max": 50.0},
     "mr_sl_pips":          {"min": 10.0, "max": 50.0},
     "mr_lookback":         {"min": 4,    "max": 24},
+    "connors_rsi_buy":     {"min": 1.0,  "max": 15.0},
+    "connors_rsi_sell":    {"min": 85.0, "max": 99.0},
+    "connors_tp_pips":     {"min": 10.0, "max": 40.0},
+    "connors_sl_pips":     {"min": 8.0,  "max": 30.0},
+    "donchian_period":     {"min": 8,    "max": 25},
+    "donchian_tp_pips":    {"min": 30.0, "max": 100.0},
+    "donchian_sl_pips":    {"min": 20.0, "max": 70.0},
 }
 
 # Cambio máximo permitido de una vez (% del valor actual)
@@ -87,6 +94,13 @@ def verify_and_apply(adjustment_type, new_value, current_params=None):
             "mr_tp_pips":          "MR_TP_Pips",
             "mr_sl_pips":          "MR_SL_Pips",
             "mr_lookback":         "MR_Lookback",
+            "connors_rsi_buy":     "ConnorsRSIBuy",
+            "connors_rsi_sell":    "ConnorsRSISell",
+            "connors_tp_pips":     "ConnorsTPPips",
+            "connors_sl_pips":     "ConnorsSLPips",
+            "donchian_period":     "DonchianPeriod",
+            "donchian_tp_pips":    "DonchianTPPips",
+            "donchian_sl_pips":    "DonchianSLPips",
         }
         param_name = param_map.get(adjustment_type)
         if param_name:
@@ -135,6 +149,13 @@ def verify_all_params(params):
         "MR_TP_Pips":        "mr_tp_pips",
         "MR_SL_Pips":        "mr_sl_pips",
         "MR_Lookback":       "mr_lookback",
+        "ConnorsRSIBuy":     "connors_rsi_buy",
+        "ConnorsRSISell":    "connors_rsi_sell",
+        "ConnorsTPPips":     "connors_tp_pips",
+        "ConnorsSLPips":     "connors_sl_pips",
+        "DonchianPeriod":    "donchian_period",
+        "DonchianTPPips":    "donchian_tp_pips",
+        "DonchianSLPips":    "donchian_sl_pips",
     }
     
     issues = []

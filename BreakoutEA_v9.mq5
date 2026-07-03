@@ -1,9 +1,10 @@
 //+------------------------------------------------------------------+
 //|  BreakoutEA_v9.mq5                                               |
-//|  v9.8: Balance en heartbeat + parametros optimizados backtester  |
+//|  v9.9: Trades reales al relay, Verificador en pipeline auto,     |
+//|        agrega E7 Connors RSI-2 y E8 Donchian (desactivadas)      |
 //+------------------------------------------------------------------+
 #property copyright "BreakoutEA v9"
-#property version   "9.80"
+#property version   "9.90"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -58,6 +59,20 @@ input double   MR_ATR_Mult         = 2.0;    // optimizado: mejor win rate 68.7%
 input double   MR_TP_Pips          = 20.0;   // optimizado
 input double   MR_SL_Pips          = 25.0;   // optimizado
 
+//--- Estrategia 7: Connors RSI-2 (agregada por backtester — DESACTIVADA hasta validar en vivo)
+input bool     UsarConnorsRSI2     = false;
+input double   ConnorsRSIBuy       = 5.0;
+input double   ConnorsRSISell      = 95.0;
+input double   ConnorsTPPips       = 20.0;
+input double   ConnorsSLPips       = 15.0;
+
+//--- Estrategia 8: Donchian Channel Breakout (agregada por backtester — DESACTIVADA hasta validar en vivo)
+input bool     UsarDonchian            = false;
+input int      DonchianPeriod          = 12;
+input double   DonchianTPPips          = 60.0;
+input double   DonchianSLPips          = 40.0;
+input bool     DonchianUsarFiltroMA200 = true;
+
 //--- Filtros generales (aplican a breakouts E1/E2/E3)
 input bool     UsarFiltroTendencia = true;
 input int      MA200Period         = 200;
@@ -105,6 +120,16 @@ datetime lastBollBar=0;
 bool     tradeMROpen=false;
 ulong    ticketMR=0;
 datetime lastMRBar=0;
+
+//--- Variables Connors RSI-2 (E7)
+bool     tradeConnorsOpen=false;
+ulong    ticketConnors=0;
+datetime lastConnorsBar=0;
+
+//--- Variables Donchian (E8)
+bool     tradeDonchianOpen=false;
+ulong    ticketDonchian=0;
+datetime lastDonchianBar=0;
 
 //--- Global
 datetime lastDay=0;
@@ -171,8 +196,9 @@ void SendTradeData(string strategy, string type, double entry, double exitPrice,
 //+------------------------------------------------------------------+
 bool HayOperacionAbierta()
 {
-   if(tradeNasdaqOpen || tradeEuropaOpen || tradeTokyoOpen ||
-      tradeRSIOpen    || tradeBollOpen   || tradeMROpen)
+   if(tradeNasdaqOpen  || tradeEuropaOpen  || tradeTokyoOpen ||
+      tradeRSIOpen     || tradeBollOpen    || tradeMROpen    ||
+      tradeConnorsOpen || tradeDonchianOpen)
       return true;
 
    datetime now = TimeCurrent();
@@ -206,7 +232,7 @@ void RefreshPosicionCache()
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   Print("=== BreakoutEA v9.8 iniciado ===");
+   Print("=== BreakoutEA v9.9 iniciado ===");
    Print("E1 Nasdaq:         ", UsarEstrategia1   ? "ACTIVA" : "INACTIVA");
    Print("E2 Europa:         ", UsarEstrategia2   ? "ACTIVA" : "INACTIVA");
    Print("E3 Tokyo:          ", UsarEstrategia3   ? "ACTIVA" : "INACTIVA");
@@ -215,11 +241,13 @@ int OnInit()
    Print("E6 Mean Reversion: ", UsarMeanReversion ? "ACTIVA" : "INACTIVA");
    Print("  MR ATR mult:     ", MR_ATR_Mult);
    Print("  MR TP/SL:        ", MR_TP_Pips, " / ", MR_SL_Pips, " pips");
+   Print("E7 Connors RSI-2:  ", UsarConnorsRSI2   ? "ACTIVA" : "INACTIVA (agregada por backtester, activar manualmente)");
+   Print("E8 Donchian:       ", UsarDonchian      ? "ACTIVA" : "INACTIVA (agregada por backtester, activar manualmente)");
    Print("Modo demo:         ", ModoDemo ? "SI" : "NO");
-   Print("Fix v9.8:          Balance en heartbeat + parametros optimizados");
+   Print("Fix v9.9:          Trades reales al relay + Verificador en pipeline + E7/E8 disponibles");
    trade.SetExpertMagicNumber(202509);
-   SendTelegram("BreakoutEA v9.8 iniciado en " + Symbol() +
-                " | MR ATR=2.0 TP=20 SL=25 | Balance en heartbeat");
+   SendTelegram("BreakoutEA v9.9 iniciado en " + Symbol() +
+                " | MR ATR=2.0 TP=20 SL=25 | E7/E8 disponibles (inactivas)");
    return(INIT_SUCCEEDED);
 }
 
@@ -313,6 +341,8 @@ void OnTick()
       if(tradeRSIOpen    && ticketRSI>0)    GestionarTrailing(ticketRSI,    "RSI");
       if(tradeBollOpen   && ticketBoll>0)   GestionarTrailing(ticketBoll,   "Bollinger");
       if(tradeMROpen     && ticketMR>0)     GestionarTrailing(ticketMR,     "MeanReversion");
+      if(tradeConnorsOpen && ticketConnors>0) GestionarTrailing(ticketConnors, "ConnorsRSI2");
+      if(tradeDonchianOpen && ticketDonchian>0) GestionarTrailing(ticketDonchian, "Donchian");
    }
 
    if(hourET >= CloseHour)
@@ -484,6 +514,115 @@ void OnTick()
    }
 
    //=================================================================
+   //--- Filtro SMA200 compartido para E7/E8 (media simple, distinta de
+   //--- la EMA de UsarFiltroTendencia — asi coincide con el backtester)
+   //=================================================================
+   double smaFiltro=0;
+   if(UsarConnorsRSI2 || UsarDonchian)
+   {
+      double smaBuf[1];
+      int smaHandle=iMA(Symbol(),PERIOD_H1,200,0,MODE_SMA,PRICE_CLOSE);
+      if(smaHandle!=INVALID_HANDLE && CopyBuffer(smaHandle,0,1,1,smaBuf)==1)
+         smaFiltro=smaBuf[0];
+      IndicatorRelease(smaHandle);
+   }
+
+   //=================================================================
+   //--- E7: Connors RSI-2 — agregada por backtester, DESACTIVADA
+   //=================================================================
+   if(UsarConnorsRSI2 && !tradeConnorsOpen && !HayOperacionAbierta())
+   {
+      datetime barTime=iTime(Symbol(),PERIOD_H1,0);
+      if(barTime != lastConnorsBar)
+      {
+         double closeActual=iClose(Symbol(),PERIOD_H1,1);
+         int rsi2Handle=iRSI(Symbol(),PERIOD_H1,2,PRICE_CLOSE);
+         double rsi2Buffer[1];
+         if(rsi2Handle!=INVALID_HANDLE && CopyBuffer(rsi2Handle,0,1,1,rsi2Buffer)==1 && smaFiltro>0)
+         {
+            double rsi2=rsi2Buffer[0];
+            double tpDist=ConnorsTPPips*_Point*10;
+            double slDist=ConnorsSLPips*_Point*10;
+
+            if(rsi2 < ConnorsRSIBuy && closeActual > smaFiltro)
+            {
+               double tp=ask+tpDist, sl=ask-slDist;
+               if(!ModoDemo)
+               {
+                  if(trade.Buy(LotSize,Symbol(),ask,sl,tp,"Connors BUY v9"))
+                  { ticketConnors=trade.ResultOrder(); tradeConnorsOpen=true; RefreshPosicionCache();
+                    SendTelegram("[BUY] Connors RSI-2 BUY\nEntrada: "+DoubleToString(ask,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
+               }
+               else { Print("[DEMO] Connors BUY @ ",ask); tradeConnorsOpen=true; }
+               lastConnorsBar=barTime;
+            }
+            else if(rsi2 > ConnorsRSISell && closeActual < smaFiltro)
+            {
+               double tp=bid-tpDist, sl=bid+slDist;
+               if(!ModoDemo)
+               {
+                  if(trade.Sell(LotSize,Symbol(),bid,sl,tp,"Connors SELL v9"))
+                  { ticketConnors=trade.ResultOrder(); tradeConnorsOpen=true; RefreshPosicionCache();
+                    SendTelegram("[SELL] Connors RSI-2 SELL\nEntrada: "+DoubleToString(bid,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
+               }
+               else { Print("[DEMO] Connors SELL @ ",bid); tradeConnorsOpen=true; }
+               lastConnorsBar=barTime;
+            }
+            IndicatorRelease(rsi2Handle);
+         }
+      }
+   }
+
+   //=================================================================
+   //--- E8: Donchian Channel Breakout — agregada por backtester, DESACTIVADA
+   //=================================================================
+   if(UsarDonchian && !tradeDonchianOpen && !HayOperacionAbierta())
+   {
+      datetime barTime=iTime(Symbol(),PERIOD_H1,0);
+      if(barTime != lastDonchianBar)
+      {
+         double closeActual=iClose(Symbol(),PERIOD_H1,1);
+         double donCloses[];
+         ArraySetAsSeries(donCloses,true);
+         if(CopyClose(Symbol(),PERIOD_H1,2,DonchianPeriod,donCloses)==DonchianPeriod)
+         {
+            double donHigh=donCloses[ArrayMaximum(donCloses)];
+            double donLow =donCloses[ArrayMinimum(donCloses)];
+            double tpDist=DonchianTPPips*_Point*10;
+            double slDist=DonchianSLPips*_Point*10;
+
+            bool okBuy  = DonchianUsarFiltroMA200 ? (closeActual > donHigh && smaFiltro>0 && closeActual > smaFiltro) : (closeActual > donHigh);
+            bool okSell = DonchianUsarFiltroMA200 ? (closeActual < donLow  && smaFiltro>0 && closeActual < smaFiltro) : (closeActual < donLow);
+
+            if(okBuy)
+            {
+               double tp=ask+tpDist, sl=ask-slDist;
+               if(!ModoDemo)
+               {
+                  if(trade.Buy(LotSize,Symbol(),ask,sl,tp,"Donchian BUY v9"))
+                  { ticketDonchian=trade.ResultOrder(); tradeDonchianOpen=true; RefreshPosicionCache();
+                    SendTelegram("[BUY] Donchian BUY\nEntrada: "+DoubleToString(ask,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
+               }
+               else { Print("[DEMO] Donchian BUY @ ",ask); tradeDonchianOpen=true; }
+               lastDonchianBar=barTime;
+            }
+            else if(okSell)
+            {
+               double tp=bid-tpDist, sl=bid+slDist;
+               if(!ModoDemo)
+               {
+                  if(trade.Sell(LotSize,Symbol(),bid,sl,tp,"Donchian SELL v9"))
+                  { ticketDonchian=trade.ResultOrder(); tradeDonchianOpen=true; RefreshPosicionCache();
+                    SendTelegram("[SELL] Donchian SELL\nEntrada: "+DoubleToString(bid,5)+"\nTP: "+DoubleToString(tp,5)+"\nSL: "+DoubleToString(sl,5)); }
+               }
+               else { Print("[DEMO] Donchian SELL @ ",bid); tradeDonchianOpen=true; }
+               lastDonchianBar=barTime;
+            }
+         }
+      }
+   }
+
+   //=================================================================
    //--- E3: Tokyo
    //=================================================================
    if(UsarEstrategia3 && tokyoRangeSet && !tradedTokyo && !tradeTokyoOpen &&
@@ -617,12 +756,14 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             }
 
             string estrategia = "Desconocida";
-            if(StringFind(comentario, "Nasdaq") >= 0)      estrategia = "Nasdaq";
-            else if(StringFind(comentario, "Europa") >= 0) estrategia = "Europa";
-            else if(StringFind(comentario, "Tokyo") >= 0)  estrategia = "Tokyo";
-            else if(StringFind(comentario, "RSI") >= 0)    estrategia = "RSI";
-            else if(StringFind(comentario, "Boll") >= 0)   estrategia = "Bollinger";
-            else if(StringFind(comentario, "MR") >= 0)     estrategia = "MeanReversion";
+            if(StringFind(comentario, "Nasdaq") >= 0)        estrategia = "Nasdaq";
+            else if(StringFind(comentario, "Europa") >= 0)   estrategia = "Europa";
+            else if(StringFind(comentario, "Tokyo") >= 0)    estrategia = "Tokyo";
+            else if(StringFind(comentario, "Connors") >= 0)  estrategia = "ConnorsRSI2";
+            else if(StringFind(comentario, "RSI") >= 0)      estrategia = "RSI";
+            else if(StringFind(comentario, "Boll") >= 0)     estrategia = "Bollinger";
+            else if(StringFind(comentario, "MR") >= 0)       estrategia = "MeanReversion";
+            else if(StringFind(comentario, "Donchian") >= 0) estrategia = "Donchian";
 
             string emoji=dealProfit>=0?"✅":"❌";
             string msg=emoji+" Operacion cerrada ("+estrategia+")\nResultado: "+DoubleToString(dealProfit,2)+" USD";
@@ -637,6 +778,8 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       if(trans.order==ticketRSI)    { tradeRSIOpen=false;    RefreshPosicionCache(); }
       if(trans.order==ticketBoll)   { tradeBollOpen=false;   RefreshPosicionCache(); }
       if(trans.order==ticketMR)     { tradeMROpen=false;     RefreshPosicionCache(); }
+      if(trans.order==ticketConnors)  { tradeConnorsOpen=false;  RefreshPosicionCache(); }
+      if(trans.order==ticketDonchian) { tradeDonchianOpen=false; RefreshPosicionCache(); }
    }
 }
 

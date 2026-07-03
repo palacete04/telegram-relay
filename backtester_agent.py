@@ -698,6 +698,43 @@ def run_backtest():
             if nuevo_lb  != curr_lb:
                 ajustes_a_aplicar.append(("mr_lookback",  nuevo_lb))
 
+    # ── E7 Connors RSI-2: ajustar umbrales y TP/SL si encuentra mejor variante
+    e7_mejor = mejores["E7_ConnorsRSI2"]
+    if e7_mejor["ok"]:
+        # Parsear label: RSI2_{buy}/{sell}_TP{tp}_SL{sl}
+        import re
+        m = re.match(r"RSI2_(\d+)/(\d+)_TP(\d+)_SL(\d+)", e7_mejor["label"])
+        if m:
+            nuevo_buy  = float(m.group(1))
+            nuevo_sell = float(m.group(2))
+            nuevo_tp   = float(m.group(3))
+            nuevo_sl   = float(m.group(4))
+            if nuevo_buy  != params_actuales.get("ConnorsRSIBuy",  -1):
+                ajustes_a_aplicar.append(("connors_rsi_buy",  nuevo_buy))
+            if nuevo_sell != params_actuales.get("ConnorsRSISell", -1):
+                ajustes_a_aplicar.append(("connors_rsi_sell", nuevo_sell))
+            if nuevo_tp   != params_actuales.get("ConnorsTPPips",  -1):
+                ajustes_a_aplicar.append(("connors_tp_pips",  nuevo_tp))
+            if nuevo_sl   != params_actuales.get("ConnorsSLPips",  -1):
+                ajustes_a_aplicar.append(("connors_sl_pips",  nuevo_sl))
+
+    # ── E8 Donchian: ajustar periodo y TP/SL si encuentra mejor variante
+    e8_mejor = mejores["E8_Donchian"]
+    if e8_mejor["ok"]:
+        # Parsear label: Don{periodo}_TP{tp}_SL{sl}_{ma200|libre}
+        import re
+        m = re.match(r"Don(\d+)_TP(\d+)_SL(\d+)_(ma200|libre)", e8_mejor["label"])
+        if m:
+            nuevo_periodo = int(m.group(1))
+            nuevo_tp      = float(m.group(2))
+            nuevo_sl      = float(m.group(3))
+            if nuevo_periodo != params_actuales.get("DonchianPeriod", -1):
+                ajustes_a_aplicar.append(("donchian_period",  nuevo_periodo))
+            if nuevo_tp      != params_actuales.get("DonchianTPPips", -1):
+                ajustes_a_aplicar.append(("donchian_tp_pips", nuevo_tp))
+            if nuevo_sl      != params_actuales.get("DonchianSLPips", -1):
+                ajustes_a_aplicar.append(("donchian_sl_pips", nuevo_sl))
+
     if ajustes_a_aplicar:
         reporte += f"PARAMETROS A ACTUALIZAR ({len(ajustes_a_aplicar)}):\n"
         for tipo, valor in ajustes_a_aplicar:
@@ -738,6 +775,13 @@ def run_backtest():
             "mr_tp_pips":          "MR_TP_Pips",
             "mr_sl_pips":          "MR_SL_Pips",
             "mr_lookback":         "MR_Lookback",
+            "connors_rsi_buy":     "ConnorsRSIBuy",
+            "connors_rsi_sell":    "ConnorsRSISell",
+            "connors_tp_pips":     "ConnorsTPPips",
+            "connors_sl_pips":     "ConnorsSLPips",
+            "donchian_period":     "DonchianPeriod",
+            "donchian_tp_pips":    "DonchianTPPips",
+            "donchian_sl_pips":    "DonchianSLPips",
         }.get(tipo, ""), -1)
 
         if valor == curr:

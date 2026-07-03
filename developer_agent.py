@@ -186,6 +186,83 @@ def apply_adjustment(adjustment_type, value):
                 content
             )
 
+    elif adjustment_type == "connors_rsi_buy":
+        import re
+        match = re.search(r'input double   ConnorsRSIBuy\s+=\s+([\d.]+);', content)
+        if match:
+            old_value = match.group(1)
+            new_content = re.sub(
+                r'(input double   ConnorsRSIBuy\s+=\s+)[\d.]+;',
+                f'\\g<1>{value};',
+                content
+            )
+
+    elif adjustment_type == "connors_rsi_sell":
+        import re
+        match = re.search(r'input double   ConnorsRSISell\s+=\s+([\d.]+);', content)
+        if match:
+            old_value = match.group(1)
+            new_content = re.sub(
+                r'(input double   ConnorsRSISell\s+=\s+)[\d.]+;',
+                f'\\g<1>{value};',
+                content
+            )
+
+    elif adjustment_type == "connors_tp_pips":
+        import re
+        match = re.search(r'input double   ConnorsTPPips\s+=\s+([\d.]+);', content)
+        if match:
+            old_value = match.group(1)
+            new_content = re.sub(
+                r'(input double   ConnorsTPPips\s+=\s+)[\d.]+;',
+                f'\\g<1>{value};',
+                content
+            )
+
+    elif adjustment_type == "connors_sl_pips":
+        import re
+        match = re.search(r'input double   ConnorsSLPips\s+=\s+([\d.]+);', content)
+        if match:
+            old_value = match.group(1)
+            new_content = re.sub(
+                r'(input double   ConnorsSLPips\s+=\s+)[\d.]+;',
+                f'\\g<1>{value};',
+                content
+            )
+
+    elif adjustment_type == "donchian_period":
+        import re
+        match = re.search(r'input int      DonchianPeriod\s+=\s+(\d+);', content)
+        if match:
+            old_value = match.group(1)
+            new_content = re.sub(
+                r'(input int      DonchianPeriod\s+=\s+)\d+;',
+                f'\\g<1>{int(value)};',
+                content
+            )
+
+    elif adjustment_type == "donchian_tp_pips":
+        import re
+        match = re.search(r'input double   DonchianTPPips\s+=\s+([\d.]+);', content)
+        if match:
+            old_value = match.group(1)
+            new_content = re.sub(
+                r'(input double   DonchianTPPips\s+=\s+)[\d.]+;',
+                f'\\g<1>{value};',
+                content
+            )
+
+    elif adjustment_type == "donchian_sl_pips":
+        import re
+        match = re.search(r'input double   DonchianSLPips\s+=\s+([\d.]+);', content)
+        if match:
+            old_value = match.group(1)
+            new_content = re.sub(
+                r'(input double   DonchianSLPips\s+=\s+)[\d.]+;',
+                f'\\g<1>{value};',
+                content
+            )
+
     if old_value is None:
         send_telegram(f"[DESARROLLADOR] No se encontró el parámetro: {adjustment_type}")
         return False
@@ -229,6 +306,13 @@ def get_current_params():
         "MR_TP_Pips":       r'input double   MR_TP_Pips\s+=\s+([\d.]+);',
         "MR_SL_Pips":       r'input double   MR_SL_Pips\s+=\s+([\d.]+);',
         "MR_Lookback":      r'input int      MR_Lookback\s+=\s+(\d+);',
+        "ConnorsRSIBuy":    r'input double   ConnorsRSIBuy\s+=\s+([\d.]+);',
+        "ConnorsRSISell":   r'input double   ConnorsRSISell\s+=\s+([\d.]+);',
+        "ConnorsTPPips":    r'input double   ConnorsTPPips\s+=\s+([\d.]+);',
+        "ConnorsSLPips":    r'input double   ConnorsSLPips\s+=\s+([\d.]+);',
+        "DonchianPeriod":   r'input int      DonchianPeriod\s+=\s+(\d+);',
+        "DonchianTPPips":   r'input double   DonchianTPPips\s+=\s+([\d.]+);',
+        "DonchianSLPips":   r'input double   DonchianSLPips\s+=\s+([\d.]+);',
     }
     
     for param, pattern in patterns.items():
