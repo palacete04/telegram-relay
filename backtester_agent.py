@@ -6,7 +6,7 @@ BACKTESTER AGENT v4
 - Corre automaticamente los domingos a las 10:00 AM Argentina
 - Descarga 8 semanas de datos H1 de EUR/USD desde Yahoo Finance
 - Testea todas las variantes de cada estrategia
-- Guarda resultados en disco (persistencia JSON)
+- Guarda resultados en GitHub (persiste entre reinicios de Render)
 - Auto-aplica los mejores parametros si superan el criterio
 - Notifica por Telegram con resumen y acciones tomadas
 """
@@ -20,8 +20,10 @@ from datetime import datetime, timedelta
 
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+GITHUB_TOKEN     = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO      = os.environ.get("GITHUB_REPO", "palacete04/telegram-relay")
 BASE_URL         = os.environ.get("BASE_URL", "https://telegram-relay-6x6l.onrender.com")
-DATA_FILE        = "/tmp/backtester_results.json"
+RESULTS_GITHUB_FILE = "backtester_results.json"
 
 # ─────────────────────────────────────────
 # UTILIDADES
@@ -35,18 +37,48 @@ def send_telegram(message):
         print(f"Error Telegram: {e}")
 
 def save_results(results):
+    """Guarda los resultados del backtester en GitHub (persiste entre reinicios de Render)"""
     try:
-        with open(DATA_FILE, "w") as f:
-            json.dump(results, f, indent=2, default=str)
-        print(f"Resultados guardados en {DATA_FILE}")
+        import base64
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{RESULTS_GITHUB_FILE}"
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        content = json.dumps(results, indent=2, default=str)
+        encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+
+        sha = None
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            sha = resp.json().get("sha")
+
+        payload = {
+            "message": f"backtester: resultados {results.get('fecha', '')}",
+            "content": encoded,
+        }
+        if sha:
+            payload["sha"] = sha
+
+        requests.put(url, headers=headers, json=payload, timeout=10)
+        print("Resultados guardados en GitHub")
     except Exception as e:
         print(f"Error guardando resultados: {e}")
 
 def load_last_results():
+    """Lee los ultimos resultados del backtester desde GitHub"""
     try:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r") as f:
-                return json.load(f)
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{RESULTS_GITHUB_FILE}"
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            import base64
+            data = response.json()
+            content = base64.b64decode(data["content"]).decode("utf-8")
+            return json.loads(content)
     except Exception as e:
         print(f"Error cargando resultados: {e}")
     return None

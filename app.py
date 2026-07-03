@@ -16,35 +16,65 @@ start_backtester()
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-TRADES_FILE = "/tmp/trades_history.json"
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO  = os.environ.get("GITHUB_REPO", "palacete04/telegram-relay")
+TRADES_GITHUB_FILE = "trades_history.json"
 HEARTBEAT_GITHUB_FILE = "heartbeat_status.json"
 
 # ─────────────────────────────────────────
-# PERSISTENCIA DE OPERACIONES (disco /tmp)
+# PERSISTENCIA DE OPERACIONES EN GITHUB
+# Persiste entre reinicios de Render, igual que el heartbeat
 # ─────────────────────────────────────────
 def load_trades():
+    """Lee el historial de trades desde GitHub"""
     try:
-        if os.path.exists(TRADES_FILE):
-            with open(TRADES_FILE, "r") as f:
-                return json.load(f)
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{TRADES_GITHUB_FILE}"
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            import base64
+            data = response.json()
+            content = base64.b64decode(data["content"]).decode("utf-8")
+            return json.loads(content)
     except Exception as e:
-        print(f"Error cargando trades: {e}")
+        print(f"Error cargando trades de GitHub: {e}")
     return []
 
 def save_trades(trades_data):
+    """Guarda el historial de trades en GitHub"""
     try:
-        with open(TRADES_FILE, "w") as f:
-            json.dump(trades_data, f, indent=2, default=str)
+        import base64
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{TRADES_GITHUB_FILE}"
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        content = json.dumps(trades_data, indent=2, default=str)
+        encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+
+        sha = None
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            sha = resp.json().get("sha")
+
+        payload = {
+            "message": f"trades: {len(trades_data)} operaciones registradas",
+            "content": encoded,
+        }
+        if sha:
+            payload["sha"] = sha
+
+        requests.put(url, headers=headers, json=payload, timeout=10)
     except Exception as e:
-        print(f"Error guardando trades: {e}")
+        print(f"Error guardando trades en GitHub: {e}")
 
 # ─────────────────────────────────────────
 # PERSISTENCIA DE HEARTBEAT EN GITHUB
 # Persiste entre reinicios de Render sin costo
 # ─────────────────────────────────────────
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-GITHUB_REPO  = os.environ.get("GITHUB_REPO", "palacete04/telegram-relay")
-
 def load_heartbeat_github():
     """Lee el ultimo heartbeat desde GitHub"""
     try:
