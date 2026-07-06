@@ -67,8 +67,11 @@ def save_trades(trades_data):
         if sha:
             payload["sha"] = sha
 
-        requests.put(url, headers=headers, json=payload, timeout=10)
+        put_resp = requests.put(url, headers=headers, json=payload, timeout=10)
+        if put_resp.status_code not in (200, 201):
+            send_telegram(f"[MONITOR] Error guardando trades en GitHub: {put_resp.status_code} {put_resp.text[:300]}")
     except Exception as e:
+        send_telegram(f"[MONITOR] Error guardando trades: {e}")
         print(f"Error guardando trades en GitHub: {e}")
 
 # ─────────────────────────────────────────

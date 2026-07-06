@@ -60,9 +60,13 @@ def save_results(results):
         if sha:
             payload["sha"] = sha
 
-        requests.put(url, headers=headers, json=payload, timeout=10)
-        print("Resultados guardados en GitHub")
+        put_resp = requests.put(url, headers=headers, json=payload, timeout=10)
+        if put_resp.status_code in (200, 201):
+            print("Resultados guardados en GitHub")
+        else:
+            send_telegram(f"[BACKTESTER] Error guardando resultados en GitHub: {put_resp.status_code} {put_resp.text[:300]}")
     except Exception as e:
+        send_telegram(f"[BACKTESTER] Error guardando resultados: {e}")
         print(f"Error guardando resultados: {e}")
 
 def load_last_results():
