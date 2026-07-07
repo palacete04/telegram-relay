@@ -14,15 +14,15 @@ input double   LotSize             = 0.01;
 input int      ServerOffset        = 1;
 input bool     ModoDemo            = false;
 
-//--- Estrategia 1: Nasdaq
-input bool     UsarEstrategia1     = true;
+//--- Estrategia 1: Nasdaq (DESACTIVADA 07/07/2026 — backtester: wr 35-38% en 8 semanas, no cumple criterio)
+input bool     UsarEstrategia1     = false;
 input int      NasdaqEntryHour     = 9;
 input int      NasdaqEntryMinute   = 45;
 input double   NasdaqRatioTP       = 1.0;
 input double   NasdaqRatioSL       = 0.5;
 
-//--- Estrategia 2: Europa
-input bool     UsarEstrategia2     = true;
+//--- Estrategia 2: Europa (DESACTIVADA 07/07/2026 — backtester: wr 36-41% en 8 semanas, no cumple criterio)
+input bool     UsarEstrategia2     = false;
 input int      EuropaRangeHour     = 3;
 input int      EuropaEntryHour     = 4;
 input double   EuropaRatioTP       = 1.0;
