@@ -137,9 +137,13 @@ datetime lastDonchianBar=0;
 datetime lastDay=0;
 datetime lastHeartbeat=0;
 
-//--- Throttle para verificacion real de posiciones MT5
+//--- Cache de posiciones reales por estrategia (throttle 60s) — respaldo
+//--- por si un flag rapido (tradeXOpen) quedo desincronizado, por ejemplo
+//--- tras reiniciar el EA/terminal con una posicion todavia abierta.
 datetime lastPosCheck=0;
-bool     cachedHayPosicion=false;
+bool     cachedNasdaq=false,  cachedEuropa=false,   cachedTokyo=false;
+bool     cachedRSI=false,     cachedBoll=false,     cachedMR=false;
+bool     cachedConnors=false, cachedDonchian=false;
 
 CTrade trade;
 
@@ -194,21 +198,20 @@ void SendTradeData(string strategy, string type, double entry, double exitPrice,
 }
 
 //+------------------------------------------------------------------+
-//| HayOperacionAbierta con throttle 60s — fix v9.7                  |
+//| Actualiza el cache de posiciones reales POR ESTRATEGIA (throttle |
+//| 60s) — v9.11: cada estrategia opera de forma independiente, ya   |
+//| no se bloquean entre si; esto solo sirve de respaldo si el flag  |
+//| rapido (tradeXOpen) quedo desincronizado (ej. reinicio del EA).  |
 //+------------------------------------------------------------------+
-bool HayOperacionAbierta()
+void ActualizarCachePosiciones()
 {
-   if(tradeNasdaqOpen  || tradeEuropaOpen  || tradeTokyoOpen ||
-      tradeRSIOpen     || tradeBollOpen    || tradeMROpen    ||
-      tradeConnorsOpen || tradeDonchianOpen)
-      return true;
-
    datetime now = TimeCurrent();
-   if(now - lastPosCheck < 60)
-      return cachedHayPosicion;
-
+   if(now - lastPosCheck < 60) return;
    lastPosCheck = now;
-   cachedHayPosicion = false;
+
+   cachedNasdaq=false;  cachedEuropa=false;   cachedTokyo=false;
+   cachedRSI=false;     cachedBoll=false;     cachedMR=false;
+   cachedConnors=false; cachedDonchian=false;
 
    int total = PositionsTotal();
    for(int i = 0; i < total; i++)
@@ -218,12 +221,19 @@ bool HayOperacionAbierta()
          PositionGetString(POSITION_SYMBOL)  == Symbol() &&
          PositionGetInteger(POSITION_MAGIC)  == 202509)
       {
-         Print("[SYNC] Posicion real detectada ticket:",ticket," — bloqueando nuevas entradas");
-         cachedHayPosicion = true;
-         break;
+         string coment    = PositionGetString(POSITION_COMMENT);
+         string estrategia = "Desconocida";
+         if(StringFind(coment, "Nasdaq") >= 0)        { cachedNasdaq=true;   estrategia="Nasdaq"; }
+         else if(StringFind(coment, "Europa") >= 0)   { cachedEuropa=true;   estrategia="Europa"; }
+         else if(StringFind(coment, "Tokyo") >= 0)    { cachedTokyo=true;    estrategia="Tokyo"; }
+         else if(StringFind(coment, "Connors") >= 0)  { cachedConnors=true;  estrategia="ConnorsRSI2"; }
+         else if(StringFind(coment, "RSI") >= 0)      { cachedRSI=true;      estrategia="RSI"; }
+         else if(StringFind(coment, "Boll") >= 0)     { cachedBoll=true;     estrategia="Bollinger"; }
+         else if(StringFind(coment, "MR") >= 0)       { cachedMR=true;       estrategia="MeanReversion"; }
+         else if(StringFind(coment, "Donchian") >= 0) { cachedDonchian=true; estrategia="Donchian"; }
+         Print("[SYNC] Posicion real detectada (",estrategia,") ticket:",ticket);
       }
    }
-   return cachedHayPosicion;
 }
 
 void RefreshPosicionCache()
@@ -370,10 +380,12 @@ void OnTick()
    bool tendenciaAlcista=(ma50>0 && ma200>0 && ask>ma50 && ma50>ma200);
    bool tendenciaBajista=(ma50>0 && ma200>0 && bid<ma50 && ma50<ma200);
 
+   ActualizarCachePosiciones();
+
    //=================================================================
    //--- E4: RSI — DESACTIVADA
    //=================================================================
-   if(UsarRSI && !tradeRSIOpen && !HayOperacionAbierta())
+   if(UsarRSI && !tradeRSIOpen && !cachedRSI)
    {
       datetime barTime=iTime(Symbol(),PERIOD_H1,0);
       if(barTime != lastRSIBar)
@@ -417,7 +429,7 @@ void OnTick()
    //=================================================================
    //--- E5: Bollinger — DESACTIVADA
    //=================================================================
-   if(UsarBollinger && !tradeBollOpen && !HayOperacionAbierta())
+   if(UsarBollinger && !tradeBollOpen && !cachedBoll)
    {
       datetime barTime=iTime(Symbol(),PERIOD_H1,0);
       if(barTime != lastBollBar)
@@ -462,7 +474,7 @@ void OnTick()
    //=================================================================
    //--- E6: Mean Reversion — ATR=2.0 TP=20 SL=25 (optimizado backtester)
    //=================================================================
-   if(UsarMeanReversion && !tradeMROpen && !HayOperacionAbierta())
+   if(UsarMeanReversion && !tradeMROpen && !cachedMR)
    {
       datetime barTime=iTime(Symbol(),PERIOD_H1,0);
       if(barTime != lastMRBar)
@@ -532,7 +544,7 @@ void OnTick()
    //=================================================================
    //--- E7: Connors RSI-2 — agregada por backtester, DESACTIVADA
    //=================================================================
-   if(UsarConnorsRSI2 && !tradeConnorsOpen && !HayOperacionAbierta())
+   if(UsarConnorsRSI2 && !tradeConnorsOpen && !cachedConnors)
    {
       datetime barTime=iTime(Symbol(),PERIOD_H1,0);
       if(barTime != lastConnorsBar)
@@ -578,7 +590,7 @@ void OnTick()
    //=================================================================
    //--- E8: Donchian Channel Breakout — agregada por backtester, DESACTIVADA
    //=================================================================
-   if(UsarDonchian && !tradeDonchianOpen && !HayOperacionAbierta())
+   if(UsarDonchian && !tradeDonchianOpen && !cachedDonchian)
    {
       datetime barTime=iTime(Symbol(),PERIOD_H1,0);
       if(barTime != lastDonchianBar)
@@ -628,7 +640,7 @@ void OnTick()
    //--- E3: Tokyo
    //=================================================================
    if(UsarEstrategia3 && tokyoRangeSet && !tradedTokyo && !tradeTokyoOpen &&
-      hourET>=TokyoEntryHour && !HayOperacionAbierta())
+      hourET>=TokyoEntryHour && !cachedTokyo)
    {
       double range=tokyoHigh-tokyoLow;
       EjecutarBreakout(ask,bid,tokyoHigh,tokyoLow,range*TokyoRatioTP,range*TokyoRatioSL,
@@ -640,7 +652,7 @@ void OnTick()
    //--- E2: Europa
    //=================================================================
    if(UsarEstrategia2 && europaRangeSet && !tradedEuropa && !tradeEuropaOpen &&
-      hourET>=EuropaEntryHour && hourET<NasdaqEntryHour && !HayOperacionAbierta())
+      hourET>=EuropaEntryHour && hourET<NasdaqEntryHour && !cachedEuropa)
    {
       double range=europaHigh-europaLow;
       EjecutarBreakout(ask,bid,europaHigh,europaLow,range*EuropaRatioTP,range*EuropaRatioSL,
@@ -653,7 +665,7 @@ void OnTick()
    //=================================================================
    if(UsarEstrategia1 && !tradedNasdaq && !tradeNasdaqOpen &&
       (hourET>NasdaqEntryHour||(hourET==NasdaqEntryHour&&dt.min>=NasdaqEntryMinute)) &&
-      !HayOperacionAbierta())
+      !cachedNasdaq)
    {
       double range=prevHigh-prevLow;
       EjecutarBreakout(ask,bid,prevHigh,prevLow,range*NasdaqRatioTP,range*NasdaqRatioSL,
@@ -777,8 +789,8 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             // comparaba trans.order contra el ticket de apertura en TODO
             // evento DEAL_ADD, incluyendo la apertura misma, lo que dejaba
             // el flag rapido en false apenas abria y dependia 100% del
-            // chequeo lento de HayOperacionAbierta() (1 vez por minuto)
-            // mientras la posicion seguia abierta).
+            // chequeo lento de respaldo (1 vez por minuto) mientras la
+            // posicion seguia abierta).
             ulong posId=(ulong)positionId;
             if(posId==ticketNasdaq)  { tradeNasdaqOpen=false;  RefreshPosicionCache(); }
             if(posId==ticketEuropa)  { tradeEuropaOpen=false;  RefreshPosicionCache(); }
