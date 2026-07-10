@@ -1,10 +1,12 @@
 //+------------------------------------------------------------------+
 //|  BreakoutEA_v9.mq5                                               |
-//|  v9.9: Trades reales al relay, Verificador en pipeline auto,     |
-//|        agrega E7 Connors RSI-2 y E8 Donchian (desactivadas)      |
+//|  v9.10: Fix reseteo de flags de posicion abierta — antes se      |
+//|         limpiaban al abrir (no solo al cerrar), dependiendo del  |
+//|         chequeo lento de respaldo mientras la posicion seguia    |
+//|         viva. Nasdaq y Europa desactivadas (bajo rendimiento).   |
 //+------------------------------------------------------------------+
 #property copyright "BreakoutEA v9"
-#property version   "9.90"
+#property version   "9.91"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -232,7 +234,7 @@ void RefreshPosicionCache()
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   Print("=== BreakoutEA v9.9 iniciado ===");
+   Print("=== BreakoutEA v9.10 iniciado ===");
    Print("E1 Nasdaq:         ", UsarEstrategia1   ? "ACTIVA" : "INACTIVA");
    Print("E2 Europa:         ", UsarEstrategia2   ? "ACTIVA" : "INACTIVA");
    Print("E3 Tokyo:          ", UsarEstrategia3   ? "ACTIVA" : "INACTIVA");
@@ -244,10 +246,10 @@ int OnInit()
    Print("E7 Connors RSI-2:  ", UsarConnorsRSI2   ? "ACTIVA" : "INACTIVA (agregada por backtester, activar manualmente)");
    Print("E8 Donchian:       ", UsarDonchian      ? "ACTIVA" : "INACTIVA (agregada por backtester, activar manualmente)");
    Print("Modo demo:         ", ModoDemo ? "SI" : "NO");
-   Print("Fix v9.9:          Trades reales al relay + Verificador en pipeline + E7/E8 disponibles");
+   Print("Fix v9.10:         Reseteo de flags solo al cerrar posicion (antes tambien al abrir)");
    trade.SetExpertMagicNumber(202509);
-   SendTelegram("BreakoutEA v9.9 iniciado en " + Symbol() +
-                " | MR ATR=2.0 TP=20 SL=25 | E7/E8 disponibles (inactivas)");
+   SendTelegram("BreakoutEA v9.10 iniciado en " + Symbol() +
+                " | Fix flags de posicion abierta | Nasdaq/Europa desactivadas");
    return(INIT_SUCCEEDED);
 }
 
@@ -770,16 +772,24 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             SendTelegram(msg);
             SendTradeData(estrategia, tipoOperacion, entryPrice, exitPrice, dealProfit, 0, 0);
             Print("Operacion cerrada. Estrategia:",estrategia," P&L: ",dealProfit);
+
+            // Reset de flags SOLO al cerrar de verdad (fix v9.10 — antes se
+            // comparaba trans.order contra el ticket de apertura en TODO
+            // evento DEAL_ADD, incluyendo la apertura misma, lo que dejaba
+            // el flag rapido en false apenas abria y dependia 100% del
+            // chequeo lento de HayOperacionAbierta() (1 vez por minuto)
+            // mientras la posicion seguia abierta).
+            ulong posId=(ulong)positionId;
+            if(posId==ticketNasdaq)  { tradeNasdaqOpen=false;  RefreshPosicionCache(); }
+            if(posId==ticketEuropa)  { tradeEuropaOpen=false;  RefreshPosicionCache(); }
+            if(posId==ticketTokyo)   { tradeTokyoOpen=false;   RefreshPosicionCache(); }
+            if(posId==ticketRSI)     { tradeRSIOpen=false;     RefreshPosicionCache(); }
+            if(posId==ticketBoll)    { tradeBollOpen=false;    RefreshPosicionCache(); }
+            if(posId==ticketMR)      { tradeMROpen=false;      RefreshPosicionCache(); }
+            if(posId==ticketConnors) { tradeConnorsOpen=false; RefreshPosicionCache(); }
+            if(posId==ticketDonchian){ tradeDonchianOpen=false;RefreshPosicionCache(); }
          }
       }
-      if(trans.order==ticketNasdaq) { tradeNasdaqOpen=false; RefreshPosicionCache(); }
-      if(trans.order==ticketEuropa) { tradeEuropaOpen=false; RefreshPosicionCache(); }
-      if(trans.order==ticketTokyo)  { tradeTokyoOpen=false;  RefreshPosicionCache(); }
-      if(trans.order==ticketRSI)    { tradeRSIOpen=false;    RefreshPosicionCache(); }
-      if(trans.order==ticketBoll)   { tradeBollOpen=false;   RefreshPosicionCache(); }
-      if(trans.order==ticketMR)     { tradeMROpen=false;     RefreshPosicionCache(); }
-      if(trans.order==ticketConnors)  { tradeConnorsOpen=false;  RefreshPosicionCache(); }
-      if(trans.order==ticketDonchian) { tradeDonchianOpen=false; RefreshPosicionCache(); }
    }
 }
 
