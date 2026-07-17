@@ -357,6 +357,12 @@ void OnTick()
       if(tradeDonchianOpen && ticketDonchian>0) GestionarTrailing(ticketDonchian, "Donchian");
    }
 
+   // Se actualiza ANTES del corte de CloseHour para que el chequeo de
+   // respaldo (y su log) sigan corriendo incluso pasado ese horario —
+   // Tokyo/MeanReversion/etc. no se cierran a la fuerza a esa hora y
+   // pueden seguir abiertas mucho despues (ver CloseHour mas abajo).
+   ActualizarCachePosiciones();
+
    if(hourET >= CloseHour)
    {
       if(tradeNasdaqOpen) CerrarPosicion(ticketNasdaq, "Cierre Nasdaq");
@@ -379,8 +385,6 @@ void OnTick()
 
    bool tendenciaAlcista=(ma50>0 && ma200>0 && ask>ma50 && ma50>ma200);
    bool tendenciaBajista=(ma50>0 && ma200>0 && bid<ma50 && ma50<ma200);
-
-   ActualizarCachePosiciones();
 
    //=================================================================
    //--- E4: RSI — DESACTIVADA
