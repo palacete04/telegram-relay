@@ -1,12 +1,11 @@
 //+------------------------------------------------------------------+
 //|  BreakoutEA_v9.mq5                                               |
-//|  v9.10: Fix reseteo de flags de posicion abierta — antes se      |
-//|         limpiaban al abrir (no solo al cerrar), dependiendo del  |
-//|         chequeo lento de respaldo mientras la posicion seguia    |
-//|         viva. Nasdaq y Europa desactivadas (bajo rendimiento).   |
+//|  v9.12: Estrategias operan en paralelo (no se bloquean entre si; |
+//|         requiere cuenta hedging), chequeo de respaldo corre      |
+//|         tambien pasado CloseHour, log muestra MR_Lookback.       |
 //+------------------------------------------------------------------+
 #property copyright "BreakoutEA v9"
-#property version   "9.91"
+#property version   "9.92"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -244,7 +243,7 @@ void RefreshPosicionCache()
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   Print("=== BreakoutEA v9.10 iniciado ===");
+   Print("=== BreakoutEA v9.12 iniciado ===");
    Print("E1 Nasdaq:         ", UsarEstrategia1   ? "ACTIVA" : "INACTIVA");
    Print("E2 Europa:         ", UsarEstrategia2   ? "ACTIVA" : "INACTIVA");
    Print("E3 Tokyo:          ", UsarEstrategia3   ? "ACTIVA" : "INACTIVA");
@@ -253,13 +252,14 @@ int OnInit()
    Print("E6 Mean Reversion: ", UsarMeanReversion ? "ACTIVA" : "INACTIVA");
    Print("  MR ATR mult:     ", MR_ATR_Mult);
    Print("  MR TP/SL:        ", MR_TP_Pips, " / ", MR_SL_Pips, " pips");
+   Print("  MR Lookback:     ", MR_Lookback, " horas");
    Print("E7 Connors RSI-2:  ", UsarConnorsRSI2   ? "ACTIVA" : "INACTIVA (agregada por backtester, activar manualmente)");
    Print("E8 Donchian:       ", UsarDonchian      ? "ACTIVA" : "INACTIVA (agregada por backtester, activar manualmente)");
    Print("Modo demo:         ", ModoDemo ? "SI" : "NO");
-   Print("Fix v9.10:         Reseteo de flags solo al cerrar posicion (antes tambien al abrir)");
+   Print("Fix v9.12:         Estrategias en paralelo + chequeo de respaldo activo tras CloseHour");
    trade.SetExpertMagicNumber(202509);
-   SendTelegram("BreakoutEA v9.10 iniciado en " + Symbol() +
-                " | Fix flags de posicion abierta | Nasdaq/Europa desactivadas");
+   SendTelegram("BreakoutEA v9.12 iniciado en " + Symbol() +
+                " | Estrategias en paralelo | Nasdaq/Europa desactivadas");
    return(INIT_SUCCEEDED);
 }
 
