@@ -56,7 +56,7 @@ input bool     BollUsarFiltroTendencia = false;
 
 //--- Estrategia 6: Mean Reversion (parametros optimizados por backtester 24/06/2026)
 input bool     UsarMeanReversion   = true;
-input int      MR_Lookback         = 8;      // horas para calcular la media
+input int      MR_Lookback         = 12;      // horas para calcular la media
 input double   MR_ATR_Mult         = 2.0;    // optimizado: mejor win rate 68.7%
 input double   MR_TP_Pips          = 20.0;   // optimizado
 input double   MR_SL_Pips          = 25.0;   // optimizado
